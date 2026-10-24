@@ -10,7 +10,7 @@ several SQL tabs, execute a statement or a multi-statement script, inspect and
 filter the result grid, then export the data. Menus, keyboard shortcuts, native
 file dialogs and a resizable layout keep everything in one window.
 
-The source code lives at <https://github.com/GokulTechno/rustquery>.
+The source code lives at <https://github.com/GokulTechno/RustQuery>.
 
 ## Features
 

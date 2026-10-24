@@ -7,6 +7,8 @@ description = "RustQuery — a fast desktop SQL workbench for PostgreSQL, MySQL 
 authors = ["Gokul Raj <gokulraj.kana@gmail.com>"]
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/GokulTechno/RustQuery"
+homepage = "https://github.com/GokulTechno/RustQuery"
 
 [dependencies]
 # Desktop UI -------------------------------------------------------------------
