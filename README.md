@@ -73,6 +73,9 @@ The source code lives at <https://github.com/GokulTechno/RustQuery>.
 
 ## Install
 
+See [INSTALL.md](INSTALL.md) for detailed package contents, manual
+installation, verification, uninstallation and troubleshooting.
+
 ### Debian / Ubuntu
 
 After building a package with `scripts/build-packages.sh` (see
