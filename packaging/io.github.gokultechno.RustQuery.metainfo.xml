@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>rustquery.desktop</id>
+  <id>io.github.gokultechno.RustQuery</id>
   <name>RustQuery</name>
   <summary>A fast desktop SQL workbench for PostgreSQL, MySQL and SQLite</summary>
   <metadata_license>MIT</metadata_license>
@@ -30,6 +30,7 @@
   <developer id="org.rustquery">
     <name>RustQuery contributors</name>
   </developer>
+  <url type="homepage">https://github.com/GokulTechno/rustquery</url>
   <categories>
     <category>Development</category>
     <category>Database</category>

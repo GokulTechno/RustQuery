@@ -107,10 +107,12 @@ fn window_icon() -> egui::IconData {
                 continue;
             }
 
+            // Diagonal teal-to-indigo gradient, matching the packaged icon.
+            let t = (fx + fy) / 2.0;
             let mut color = [
-                (13.0 + 74.0 * fx) as u8,
-                (148.0 - 88.0 * fy) as u8,
-                (136.0 + 46.0 * fy) as u8,
+                (13.0 + 74.0 * t) as u8,
+                (148.0 - 88.0 * t) as u8,
+                (136.0 + 46.0 * t) as u8,
                 255,
             ];
 

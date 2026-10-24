@@ -1,5 +1,7 @@
 # RustQuery
 
+<img src="packaging/icons/hicolor/128x128/apps/rustquery.png" width="96" alt="RustQuery icon">
+
 RustQuery is a fast, native desktop SQL workbench for **PostgreSQL**, **MySQL**
 and **SQLite**, written in Rust with [eframe], [egui], [tokio] and [sqlx].
 
@@ -7,6 +9,8 @@ It is built for a focused desktop workflow: connect, browse the schema, write
 several SQL tabs, execute a statement or a multi-statement script, inspect and
 filter the result grid, then export the data. Menus, keyboard shortcuts, native
 file dialogs and a resizable layout keep everything in one window.
+
+The source code lives at <https://github.com/GokulTechno/rustquery>.
 
 ## Features
 
@@ -43,9 +47,10 @@ file dialogs and a resizable layout keep everything in one window.
 - **Persistent workspace** — tabs, settings, profiles and query history are
   restored on the next launch. Workspace edits autosave every five seconds and
   on a clean quit.
-- **Desktop integration** — the packages install a launcher entry, a scalable
-  icon and AppStream metadata, so RustQuery appears in application menus and
-  software centres.
+- **Desktop integration** — the packages and the installer add a launcher
+  entry, a scalable icon plus PNG icons from 16 to 512 px, and AppStream
+  metadata, so RustQuery appears in application menus, docks and software
+  centres.
 
 ## Requirements
 
@@ -65,6 +70,43 @@ file dialogs and a resizable layout keep everything in one window.
 - Native open/save dialogs use `xdg-desktop-portal` on Linux. Install the
   portal and a backend for your desktop (for example
   `xdg-desktop-portal-gtk`). The in-app export dialog works without a portal.
+
+## Install
+
+### Debian / Ubuntu
+
+After building a package with `scripts/build-packages.sh` (see
+[Packaging](#packaging)), install it with:
+
+```bash
+sudo apt install ./dist/rustquery_0.1.0-1_amd64.deb
+```
+
+### Fedora / RHEL
+
+```bash
+sudo dnf install ./dist/rustquery-0.1.0-1.x86_64.rpm
+```
+
+### From source
+
+`scripts/install.sh` builds the release binary and installs it together with
+the launcher, icons, AppStream metadata, man page and documentation:
+
+```bash
+./scripts/install.sh                 # current user, ~/.local
+sudo ./scripts/install.sh --system   # system-wide, /usr/local
+./scripts/install.sh --prefix /opt/rustquery
+```
+
+The launcher points at the installed binary, so the application works even when
+`<prefix>/bin` is not on `PATH`. Pass `--no-build` to reuse an existing
+`target/release/rustquery`, `--destdir DIR` to stage an installation, or
+`--uninstall` to remove an installation made with the same prefix. User
+configuration in `~/.config/rustquery` is not touched by `--uninstall`.
+
+After installation, RustQuery appears in the application menu. The binary is
+installed as `<prefix>/bin/rustquery`.
 
 ## Build and run
 
@@ -219,6 +261,9 @@ fallback also keeps copied data in process memory only.
 ## Architecture
 
 ```
+scripts/
+├── build-packages.sh    Debian and RPM packaging
+└── install.sh           per-user/system installer and uninstaller
 src/
 ├── main.rs              eframe entry point, CLI parsing, Tokio runtime, window icon
 ├── lib.rs               public module surface (testable application library)
@@ -320,9 +365,13 @@ suffix comes from the RPM platform. They contain:
 - `/usr/bin/rustquery`
 - the `rustquery(1)` man page
 - `rustquery.desktop` in the applications menu
-- a scalable icon under `hicolor/scalable/apps`
+- a scalable icon and PNG icons under `hicolor/.../apps`
 - AppStream metadata in `/usr/share/metainfo`
 - the README and the MIT license
+
+`scripts/install.sh` installs the same files into `~/.local`, `/usr/local` or a
+custom prefix without building a package. It also refreshes the desktop and
+icon caches when the tools are available.
 
 The Debian package depends on `hicolor-icon-theme` and recommends
 `xdg-desktop-portal` plus a portal backend for native file dialogs. The RPM

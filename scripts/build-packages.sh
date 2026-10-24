@@ -2,8 +2,8 @@
 #
 # Build Debian and RPM packages for RustQuery from a locally built release
 # binary. No root privileges are required; packages are written to ./dist.
-# Both formats install the desktop launcher, scalable icon, AppStream metadata,
-# man page, README and license alongside the binary.
+# Both formats install the desktop launcher, scalable and PNG icons, AppStream
+# metadata, man page, README and license alongside the binary.
 #
 # Usage:
 #   scripts/build-packages.sh                 # .deb and .rpm
@@ -87,9 +87,9 @@ OUTPUT:
     dist/rustquery-<version>-<release>[.<dist>].<rpm-arch>.rpm
 
 The packages contain the desktop binary, a launcher entry, a scalable icon,
-AppStream metadata, a man page, the README and the MIT license. SQLite support
-is embedded; PostgreSQL and MySQL clients need a reachable database server at
-runtime, but no build-time database service is required.
+PNG icons, AppStream metadata, a man page, the README and the MIT license.
+SQLite support is embedded; PostgreSQL and MySQL clients need a reachable
+database server at runtime, but no build-time database service is required.
 EOF
 }
 
@@ -222,11 +222,15 @@ for asset in \
     LICENSE \
     packaging/rustquery.1 \
     packaging/rustquery.desktop \
-    packaging/rustquery.metainfo.xml \
+    packaging/io.github.gokultechno.RustQuery.metainfo.xml \
     packaging/icons/hicolor/scalable/apps/rustquery.svg \
     packaging/rpm/rustquery.spec; do
     [[ -f "$ROOT_DIR/$asset" ]] || die "missing packaging asset: $asset"
 done
+[[ -d "$ROOT_DIR/packaging/icons/hicolor" ]] ||
+    die "missing icon directory: packaging/icons/hicolor"
+find "$ROOT_DIR/packaging/icons/hicolor" -type f -name 'rustquery.png' -print -quit |
+    grep -q . || die "missing PNG icons under packaging/icons/hicolor"
 
 # Validate the desktop metadata when the distribution tools are available.
 # They are not required to build a package, but catching a malformed launcher
@@ -238,10 +242,10 @@ else
     warn "desktop-file-validate not found; skipping launcher validation"
 fi
 if command -v appstreamcli >/dev/null 2>&1; then
-    if ! appstream_output="$(appstreamcli validate --no-net "$ROOT_DIR/packaging/rustquery.metainfo.xml" 2>&1)"; then
+    if ! appstream_output="$(appstreamcli validate --no-net "$ROOT_DIR/packaging/io.github.gokultechno.RustQuery.metainfo.xml" 2>&1)"; then
         if printf '%s\n' "$appstream_output" | grep -q '^E:'; then
             printf '%s\n' "$appstream_output" >&2
-            die "packaging/rustquery.metainfo.xml failed AppStream validation"
+            die "packaging/io.github.gokultechno.RustQuery.metainfo.xml failed AppStream validation"
         fi
         note "AppStream metadata passed with non-fatal warnings"
     fi
@@ -411,10 +415,12 @@ build_deb() {
     gzip -9n "$stage/usr/share/man/man1/rustquery.1"
     install -D -m 0644 -p "$ROOT_DIR/packaging/rustquery.desktop" \
         "$stage/usr/share/applications/$PKG_NAME.desktop"
-    install -D -m 0644 -p "$ROOT_DIR/packaging/rustquery.metainfo.xml" \
-        "$stage/usr/share/metainfo/$PKG_NAME.metainfo.xml"
-    install -D -m 0644 -p "$ROOT_DIR/packaging/icons/hicolor/scalable/apps/rustquery.svg" \
-        "$stage/usr/share/icons/hicolor/scalable/apps/$PKG_NAME.svg"
+    install -D -m 0644 -p "$ROOT_DIR/packaging/io.github.gokultechno.RustQuery.metainfo.xml" \
+        "$stage/usr/share/metainfo/io.github.gokultechno.RustQuery.metainfo.xml"
+    while IFS= read -r -d '' icon; do
+        relative="${icon#"$ROOT_DIR/packaging/icons/"}"
+        install -D -m 0644 -p "$icon" "$stage/usr/share/icons/$relative"
+    done < <(find "$ROOT_DIR/packaging/icons" -type f -print0 | sort -z)
 
     # Debian policy expects a machine-readable copyright file.
     {
@@ -510,8 +516,11 @@ build_rpm() {
     install -m 0644 -p "$ROOT_DIR/LICENSE" "$top/SOURCES/LICENSE"
     install -m 0644 -p "$ROOT_DIR/packaging/rustquery.1" "$top/SOURCES/rustquery.1"
     install -m 0644 -p "$ROOT_DIR/packaging/rustquery.desktop" "$top/SOURCES/rustquery.desktop"
-    install -m 0644 -p "$ROOT_DIR/packaging/rustquery.metainfo.xml" "$top/SOURCES/rustquery.metainfo.xml"
-    install -m 0644 -p "$ROOT_DIR/packaging/icons/hicolor/scalable/apps/rustquery.svg" "$top/SOURCES/rustquery.svg"
+    install -m 0644 -p "$ROOT_DIR/packaging/io.github.gokultechno.RustQuery.metainfo.xml" \
+        "$top/SOURCES/io.github.gokultechno.RustQuery.metainfo.xml"
+    tar --sort=name --owner=0 --group=0 --numeric-owner \
+        -czf "$top/SOURCES/rustquery-icons.tar.gz" \
+        -C "$ROOT_DIR/packaging/icons" hicolor
 
     args=(
         -bb
