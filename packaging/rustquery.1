@@ -1,0 +1,147 @@
+.TH RUSTQUERY 1 "2026-10-24" "RustQuery" "User Commands"
+.SH NAME
+rustquery \- desktop SQL workbench for PostgreSQL, MySQL and SQLite
+.SH SYNOPSIS
+.B rustquery
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B RustQuery
+is a native desktop SQL client for PostgreSQL, MySQL and SQLite. It keeps
+saved connection profiles, browses schemas lazily, runs multi-statement SQL
+from several editor tabs, and displays results in a virtualised, sortable and
+filterable grid. Results can be exported as CSV, JSON or SQL INSERT statements.
+.PP
+The application runs in a single window with a menu bar, connection dashboard,
+schema explorer, SQL editor, result grid and timestamped console. SQL file
+dialogs use the desktop's native file chooser where available; exports use an
+in-application dialog.
+.PP
+PostgreSQL and MySQL sessions connect over the network. SQLite databases are
+opened locally as a file, or in memory with the special path
+\fB:memory:\fR.
+No configuration is required to start the program: create a profile on the
+connection dashboard, select it, and choose \fBConnect\fR.
+.PP
+A graphical session with OpenGL support is required. RustQuery uses X11 or
+Wayland on Linux.
+.SH OPTIONS
+.TP
+.BR \-\-config\-dir " " \fIPATH\fR
+Read and write profiles, settings, history and workspace state in
+.IR PATH .
+.TP
+.BR \-h ", " \-\-help
+Print a short help text and exit.
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.SH ENVIRONMENT
+.TP
+.B RUSTQUERY_CONFIG_DIR
+Overrides the configuration directory. Takes precedence over
+.BR XDG_CONFIG_HOME .
+.TP
+.B XDG_CONFIG_HOME
+When set, configuration is stored in
+.IR $XDG_CONFIG_HOME/rustquery .
+.TP
+.B HOME
+Used to locate
+.I ~/.config/rustquery
+when the variables above are not set.
+.TP
+.B DISPLAY
+The X11 display used when running under X11.
+.TP
+.B WAYLAND_DISPLAY
+The Wayland compositor socket used when running under Wayland.
+.SH FILES
+.TP
+.I ~/.config/rustquery/profiles.json
+Saved connection profiles. Passwords are stored in plain text; the file is
+created with mode 0600 on Unix.
+.TP
+.I ~/.config/rustquery/settings.json
+Theme, row limit, query timeout and layout preferences.
+.TP
+.I ~/.config/rustquery/history.json
+Query history.
+.TP
+.I ~/.config/rustquery/workspace.json
+Restored editor tabs.
+.SH KEYBOARD
+.TP
+.B F1
+Open the complete in-application keyboard reference.
+.TP
+.B F2
+Show the connection dashboard or return to the workspace.
+.TP
+.BR F3 ", " F4 ", " F6 ", " F7
+Focus the explorer, editor, results grid or console.
+.TP
+.BR F5 " or " Ctrl+Enter
+Execute the selection, or the whole editor buffer when nothing is selected.
+.TP
+.BR F8 ", " F9 ", " F10
+Begin, commit or roll back a transaction.
+.TP
+.BR F11 " or " Ctrl+,
+Open settings.
+.TP
+.B F12
+Cycle the colour theme.
+.TP
+.B Ctrl+H
+Open query history.
+.TP
+.B Ctrl+D
+Disconnect from the database.
+.TP
+.B Ctrl+Q
+Quit. A confirmation is shown while a query is running or a transaction is
+open.
+.TP
+.BR Ctrl+T " / " Ctrl+W
+Open or close a query tab.
+.TP
+.BR Ctrl+Tab " / " Ctrl+Shift+Tab
+Switch to the next or previous query tab.
+.TP
+.B Ctrl+Space
+Open schema and keyword completion in the editor.
+.TP
+.BR Ctrl+O " / " Ctrl+S
+Open or save a SQL file.
+.TP
+.B Ctrl+E
+Export the current result set.
+.TP
+.B Ctrl+F
+Filter all columns in the result grid.
+.SH EXAMPLES
+Start with the default configuration:
+.PP
+.RS 4
+.EX
+rustquery
+.EE
+.RE
+.PP
+Use an isolated configuration directory for testing:
+.PP
+.RS 4
+.EX
+rustquery \-\-config\-dir /tmp/rustquery-config
+.EE
+.RE
+.SH EXIT STATUS
+Zero on a normal exit. A non-zero status is returned when the desktop window
+cannot be initialised, the async runtime cannot start, or command-line
+arguments are invalid.
+.SH SEE ALSO
+.BR psql (1),
+.BR mysql (1),
+.BR sqlite3 (1)
+.SH COPYRIGHT
+MIT License. Copyright (c) 2026 RustQuery contributors.

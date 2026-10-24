@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>rustquery.desktop</id>
+  <name>RustQuery</name>
+  <summary>A fast desktop SQL workbench for PostgreSQL, MySQL and SQLite</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+
+  <description>
+    <p>
+      RustQuery is a native desktop SQL client for PostgreSQL, MySQL and
+      SQLite. It combines saved connection profiles, a lazy schema explorer,
+      multiple SQL editor tabs and a virtualised result grid in one window.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Saved PostgreSQL, MySQL and SQLite connection profiles with SSL modes and connection tests.</li>
+      <li>Schema explorer for databases, tables, views, columns, indexes and foreign keys.</li>
+      <li>SQL editor with syntax highlighting, completion, undo/redo and multi-statement scripts.</li>
+      <li>Sortable, filterable result grid with full-cell inspection and CSV, JSON and SQL exports.</li>
+      <li>Transaction controls, query history, a timestamped console and four colour themes.</li>
+    </ul>
+    <p>
+      SQLite support is embedded. PostgreSQL and MySQL require a reachable
+      database server at runtime.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">rustquery.desktop</launchable>
+  <developer id="org.rustquery">
+    <name>RustQuery contributors</name>
+  </developer>
+  <categories>
+    <category>Development</category>
+    <category>Database</category>
+  </categories>
+  <keywords>
+    <keyword>SQL</keyword>
+    <keyword>database</keyword>
+    <keyword>query</keyword>
+    <keyword>PostgreSQL</keyword>
+    <keyword>MySQL</keyword>
+    <keyword>SQLite</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-10-24"/>
+  </releases>
+</component>

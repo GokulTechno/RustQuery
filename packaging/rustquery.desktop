@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=RustQuery
+GenericName=SQL Workbench
+Comment=Query PostgreSQL, MySQL and SQLite databases
+Exec=rustquery
+Icon=rustquery
+Terminal=false
+Categories=Development;Database;
+Keywords=SQL;database;query;postgres;postgresql;mysql;sqlite;
+StartupNotify=true
+StartupWMClass=rustquery
