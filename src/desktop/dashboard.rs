@@ -68,7 +68,7 @@ fn header(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<Das
             .add(
                 Button::new(
                     RichText::new("+  New connection")
-                        .color(palette.bg)
+                        .color(palette.on_accent())
                         .strong(),
                 )
                 .fill(palette.accent),
@@ -208,7 +208,7 @@ fn error_banner(ui: &mut Ui, palette: &Palette, error: &str, action: &mut Option
                         .strong()
                         .color(palette.red),
                 );
-                ui.label(RichText::new(error).small().color(palette.subtext));
+                ui.label(RichText::new(error).small().color(palette.text));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("Dismiss").clicked() {
                         *action = Some(DashboardAction::DismissError);
@@ -269,7 +269,7 @@ fn profiles(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<D
                         .add(
                             Button::new(
                                 RichText::new("Create your first connection")
-                                    .color(palette.bg),
+                                    .color(palette.on_accent()),
                             )
                             .fill(palette.accent),
                         )
@@ -366,7 +366,7 @@ fn profiles(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<D
                         if ui
                             .add_enabled(
                                 !busy,
-                                Button::new(RichText::new("Connect").color(palette.bg)),
+                                Button::new(RichText::new("Connect").color(palette.on_accent())),
                             )
                             .on_hover_text("Connect to this database")
                             .clicked()

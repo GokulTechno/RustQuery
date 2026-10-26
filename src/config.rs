@@ -93,15 +93,17 @@ pub enum SettingsField {
     RowLimit,
     Timeout,
     EditorRatio,
+    SidebarWidth,
     Theme,
     ShowLogs,
 }
 
 impl SettingsField {
-    pub const ALL: [SettingsField; 5] = [
+    pub const ALL: [SettingsField; 6] = [
         SettingsField::RowLimit,
         SettingsField::Timeout,
         SettingsField::EditorRatio,
+        SettingsField::SidebarWidth,
         SettingsField::Theme,
         SettingsField::ShowLogs,
     ];
@@ -111,7 +113,8 @@ impl SettingsField {
             SettingsField::RowLimit => "Row limit",
             SettingsField::Timeout => "Query timeout (s)",
             SettingsField::EditorRatio => "Editor height (%)",
-            SettingsField::Theme => "Theme",
+            SettingsField::SidebarWidth => "Explorer width (columns)",
+            SettingsField::Theme => "Colour theme",
             SettingsField::ShowLogs => "Show console",
         }
     }

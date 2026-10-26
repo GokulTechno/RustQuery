@@ -15,7 +15,7 @@ pub mod workspace;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use eframe::egui::{self, Align2, Frame, Key, KeyboardShortcut, Margin, Modifiers, RichText};
+use eframe::egui::{self, Align2, Color32, Frame, Key, KeyboardShortcut, Margin, Modifiers, RichText};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -382,10 +382,6 @@ impl DesktopApp {
                     {
                         self.app.cycle_theme();
                     }
-                    if let Some(toast) = &self.app.toast {
-                        let color = palette.log_color(toast.level);
-                        ui.label(RichText::new(&toast.text).color(color));
-                    }
                 });
             });
     }
@@ -475,14 +471,25 @@ impl DesktopApp {
             .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-18.0, -38.0))
             .show(ctx, |ui| {
                 Frame::new()
-                    .fill(palette.elevated)
-                    .stroke(egui::Stroke::new(1.0_f32, color))
+                    .fill(palette.panel)
+                    .stroke(egui::Stroke::new(1.5_f32, color))
                     .corner_radius(8)
                     .inner_margin(Margin::symmetric(12, 8))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 2],
+                        blur: 10,
+                        spread: 0,
+                        color: Color32::from_black_alpha(if palette.light { 28 } else { 72 }),
+                    })
                     .show(ui, |ui| {
                         ui.set_min_width(200.0);
                         ui.set_max_width(420.0);
-                        ui.label(RichText::new(&toast.text).color(color).strong());
+                        ui.label(RichText::new(&toast.text).color(palette.text).strong());
+                        ui.label(
+                            RichText::new(toast.level.label())
+                                .small()
+                                .color(color),
+                        );
                     });
             });
     }

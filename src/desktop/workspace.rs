@@ -1,7 +1,8 @@
 //! Workspace: tab strip, SQL editor, results grid, console and explorer.
 
 use eframe::egui::{
-    self, Align, Button, Color32, Frame, Layout, Margin, RichText, ScrollArea, Sense, TextEdit, Ui,
+    self, Align, Button, Color32, Frame, Layout, Margin, RichText, ScrollArea, Sense, Stroke,
+    TextEdit, Ui,
 };
 
 use crate::app::{App, Focus, TxAction, View};
@@ -121,7 +122,17 @@ fn show_tabs(app: &mut App, ui: &mut Ui, palette: &Palette) {
                             } else {
                                 palette.subtext
                             }))
-                            .selected(selected)
+                            .fill(if selected {
+                                palette.selection
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .stroke(
+                                Stroke::new(
+                                    if selected { 1.0 } else { 0.0 },
+                                    palette.accent.gamma_multiply(0.75),
+                                ),
+                            )
                             .small(),
                         );
                         if response.clicked() {
@@ -135,10 +146,10 @@ fn show_tabs(app: &mut App, ui: &mut Ui, palette: &Palette) {
                                 .small()
                                 .frame(false),
                         );
-                        if close_response.clicked() {
-                            close = Some(*index);
-                        }
-                        if close_response.on_hover_text("Close tab (Ctrl+W)").clicked() {
+                        if close_response
+                            .on_hover_text("Close tab (Ctrl+W)")
+                            .clicked()
+                        {
                             close = Some(*index);
                         }
                         ui.add_space(2.0);
@@ -209,7 +220,7 @@ fn show_toolbar(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 if running {
                     if ui
                         .add(
-                            Button::new(RichText::new("■ Stop").color(palette.bg))
+                            Button::new(RichText::new("■ Stop").color(palette.on_destructive()))
                                 .fill(palette.red),
                         )
                         .on_hover_text("Cancel the running query (Ctrl+C)")
@@ -220,7 +231,7 @@ fn show_toolbar(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 } else if ui
                     .add_enabled(
                         connected,
-                        Button::new(RichText::new("▶ Run").color(palette.bg))
+                        Button::new(RichText::new("▶ Run").color(palette.on_accent()))
                             .fill(palette.accent),
                     )
                     .on_hover_text("Execute selection or buffer (Ctrl+Enter / F5)")
@@ -540,7 +551,7 @@ pub fn show_sidebar(app: &mut App, ui: &mut Ui) {
                 let is_selected = selected.as_deref() == Some(row.id.as_str());
                 let indent = row.depth as f32 * 13.0;
                 let (bg, text_color) = if is_selected {
-                    (palette.elevated, palette.text)
+                    (palette.selection, palette.text)
                 } else {
                     (Color32::TRANSPARENT, palette.text)
                 };

@@ -659,7 +659,7 @@ fn show_placeholder(
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Query error").strong().color(palette.red));
-                ui.label(RichText::new(&error.summary).small().color(palette.subtext));
+                ui.label(RichText::new(&error.summary).small().color(palette.text));
             });
             ScrollArea::vertical()
                 .id_salt("rustquery_query_error")

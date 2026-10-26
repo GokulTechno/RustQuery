@@ -130,6 +130,33 @@ impl Palette {
             crate::model::Driver::Sqlite => self.green,
         }
     }
+
+    /// Foreground on filled accent buttons (Run, Connect, primary modal actions).
+    pub fn on_accent(&self) -> Color32 {
+        if self.light {
+            Color32::WHITE
+        } else {
+            self.bg
+        }
+    }
+
+    /// Foreground on filled destructive buttons (Stop, delete confirmations).
+    pub fn on_destructive(&self) -> Color32 {
+        if self.light {
+            Color32::WHITE
+        } else {
+            self.bg
+        }
+    }
+
+    /// Dimmed overlay behind modal dialogs.
+    pub fn modal_scrim(&self) -> Color32 {
+        if self.light {
+            Color32::from_black_alpha(72)
+        } else {
+            Color32::from_black_alpha(150)
+        }
+    }
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -162,7 +189,7 @@ pub fn apply(ctx: &egui::Context, theme: ThemeKind) {
     v.warn_fg_color = p.yellow;
     v.error_fg_color = p.red;
     v.selection.bg_fill = p.selection;
-    v.selection.stroke = Stroke::new(1.0_f32, p.text);
+    v.selection.stroke = Stroke::new(1.0_f32, p.accent.gamma_multiply(0.85));
     v.widgets = egui::style::Widgets {
         noninteractive: WidgetVisuals {
             bg_fill: p.panel,
@@ -277,6 +304,14 @@ mod tests {
             assert!(
                 contrast > 4.5,
                 "{} contrast is only {contrast:.2}",
+                theme.label()
+            );
+            let on_accent = relative_luminance(p.on_accent());
+            let accent = relative_luminance(p.accent);
+            let accent_contrast = (on_accent.max(accent) + 0.05) / (on_accent.min(accent) + 0.05);
+            assert!(
+                accent_contrast > 4.5,
+                "{} accent label contrast is only {accent_contrast:.2}",
                 theme.label()
             );
             assert!(!summary(theme).is_empty());

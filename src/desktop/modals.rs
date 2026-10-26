@@ -73,6 +73,7 @@ fn shell(
     add: impl FnOnce(&mut Ui),
 ) -> bool {
     let response = egui::Modal::new(Id::new(id))
+        .backdrop_color(palette.modal_scrim())
         .frame(
             Frame::new()
                 .fill(palette.panel)
@@ -97,7 +98,7 @@ fn heading(ui: &mut Ui, palette: &Palette, title: &str, subtitle: &str) {
 
 fn primary(ui: &mut Ui, palette: &Palette, text: &str) -> egui::Response {
     ui.add(
-        Button::new(RichText::new(text).color(palette.bg).strong())
+        Button::new(RichText::new(text).color(palette.on_accent()).strong())
             .fill(palette.accent)
             .min_size(egui::vec2(88.0, 28.0)),
     )
@@ -894,6 +895,8 @@ fn history(
                             egui::Label::new(RichText::new(label).monospace().small().color(
                                 if selected {
                                     palette.text
+                                } else if entry.success {
+                                    palette.subtext
                                 } else {
                                     status_colour
                                 },
@@ -1104,7 +1107,7 @@ fn settings(
         ui.add_space(6.0);
         ui.label(
             RichText::new(
-                "Use the Left and Right arrow keys to adjust the selected row. Themes change instantly; Esc reverts all changes.",
+                "Use ← and → on the selected row (or the +/− buttons). Colour theme updates live; Esc or Cancel reverts unsaved changes.",
             )
             .small()
             .color(palette.muted),
@@ -1163,6 +1166,7 @@ fn setting_value(settings: &Settings, field: SettingsField) -> String {
         SettingsField::RowLimit => format_count(settings.row_limit as u64),
         SettingsField::Timeout => format!("{} s", settings.query_timeout_secs),
         SettingsField::EditorRatio => format!("{} %", settings.editor_ratio),
+        SettingsField::SidebarWidth => format!("{} cols", settings.sidebar_width),
         SettingsField::Theme => settings.theme.label().to_string(),
         SettingsField::ShowLogs => yes_no(settings.show_logs),
     }
@@ -1185,6 +1189,10 @@ fn adjust_setting(settings: &mut Settings, field: SettingsField, direction: isiz
         SettingsField::EditorRatio => {
             let next = (settings.editor_ratio as i64 + 2 * direction as i64).clamp(20, 80);
             settings.editor_ratio = next as u16;
+        }
+        SettingsField::SidebarWidth => {
+            let next = (settings.sidebar_width as i64 + 2 * direction as i64).clamp(20, 80);
+            settings.sidebar_width = next as u16;
         }
         SettingsField::Theme => {
             settings.theme = if direction >= 0 {
@@ -1336,5 +1344,10 @@ mod tests {
             adjust_setting(&mut settings, SettingsField::EditorRatio, -1);
         }
         assert_eq!(settings.editor_ratio, 20);
+
+        for _ in 0..200 {
+            adjust_setting(&mut settings, SettingsField::SidebarWidth, 1);
+        }
+        assert_eq!(settings.sidebar_width, 80);
     }
 }
