@@ -10,7 +10,8 @@ use eframe::egui::{
 };
 
 use crate::app::{
-    App, ExportDialog, FilterDialog, InputPurpose, Modal, ProfileForm, SettingsDialog,
+    App, ConnectionPicker, ExportDialog, FilterDialog, InputPurpose, Modal, ProfileForm,
+    SettingsDialog,
 };
 use crate::config::{Settings, SettingsField};
 use crate::export::{ExportFormat, ExportScope};
@@ -44,6 +45,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         Modal::Settings(dialog) => settings(app, ctx, &palette, dialog, new_modal),
         Modal::Input(dialog) => input(app, ctx, &palette, dialog, new_modal),
         Modal::Info(dialog) => info(app, ctx, &palette, dialog),
+        Modal::ConnectionPicker(picker) => connection_picker(app, ctx, &palette, picker, new_modal),
     }
 }
 
@@ -59,6 +61,7 @@ fn modal_identity(modal: &Modal) -> String {
         Modal::Settings(_) => "settings".to_string(),
         Modal::Input(dialog) => format!("input:{}", dialog.title),
         Modal::Info(dialog) => format!("info:{}", dialog.title),
+        Modal::ConnectionPicker(_) => "connection_picker".to_string(),
     }
 }
 
@@ -141,6 +144,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Connections",
         &[
             ("Ctrl+Shift+N", "new connection profile"),
+            ("Ctrl+Shift+O", "switch connection (while connected)"),
             ("Enter", "connect to the selected profile"),
             ("Double-click", "connect to a profile"),
             ("Ctrl+O / Ctrl+S", "open / save a SQL file"),
@@ -268,6 +272,133 @@ fn help(app: &mut App, ctx: &egui::Context, palette: &Palette, _scroll: u16) {
         return;
     }
     app.modal = Some(Modal::Help { scroll: 0 });
+}
+
+// ---------------------------------------------------------------------------
+// Connection picker (switch while connected)
+// ---------------------------------------------------------------------------
+
+fn connection_picker(
+    app: &mut App,
+    ctx: &egui::Context,
+    palette: &Palette,
+    mut picker: ConnectionPicker,
+    new_modal: bool,
+) {
+    let max = app.profiles.len().saturating_sub(1);
+    let up = !new_modal && ctx.input(|input| input.key_pressed(Key::ArrowUp));
+    let down = !new_modal && ctx.input(|input| input.key_pressed(Key::ArrowDown));
+    if up {
+        picker.selected = picker.selected.saturating_sub(1);
+    }
+    if down {
+        picker.selected = (picker.selected + 1).min(max);
+    }
+    let enter = !new_modal && ctx.input(|input| input.key_pressed(Key::Enter));
+
+    let active_id = app.session.as_ref().map(|session| session.info.profile_id);
+    let busy = app.connect.is_some();
+    let mut connect_index: Option<usize> = None;
+    let mut manage = false;
+    let mut new_profile = false;
+    let mut close_now = false;
+
+    let close = shell(ctx, "rustquery_connections", palette, 560.0, |ui| {
+        heading(
+            ui,
+            palette,
+            "Switch connection",
+            "SQL editor tabs are kept. Result grids are cleared when the new session opens.",
+        );
+        if app.profiles.is_empty() {
+            ui.label(
+                RichText::new("No saved profiles yet.")
+                    .small()
+                    .color(palette.muted),
+            );
+        } else {
+            ScrollArea::vertical()
+                .id_salt("rustquery_connection_picker_scroll")
+                .max_height(320.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for (index, profile) in app.profiles.iter().enumerate() {
+                        let selected = index == picker.selected;
+                        let is_active = active_id == Some(profile.id);
+                        let label = format!(
+                            "{}  {}  {}",
+                            profile.driver.label(),
+                            profile.name,
+                            profile.describe()
+                        );
+                        let response = ui.add(
+                            egui::Label::new(
+                                RichText::new(if is_active {
+                                    format!("● {label}")
+                                } else {
+                                    label
+                                })
+                                    .monospace()
+                                    .small()
+                                    .color(if selected {
+                                        palette.text
+                                    } else if is_active {
+                                        palette.green
+                                    } else {
+                                        palette.subtext
+                                    }),
+                            )
+                            .sense(egui::Sense::click())
+                            .truncate(),
+                        );
+                        if response.clicked() {
+                            picker.selected = index;
+                        }
+                        if response.double_clicked() {
+                            picker.selected = index;
+                            connect_index = Some(index);
+                        }
+                    }
+                });
+        }
+        footer_buttons(ui, palette, |ui| {
+            if primary(ui, palette, "Connect").clicked() {
+                connect_index = Some(picker.selected.min(max));
+            }
+            if secondary(ui, "Cancel").clicked() {
+                close_now = true;
+            }
+            if ui.button("Dashboard").clicked() {
+                manage = true;
+            }
+            if ui.button("New connection").clicked() {
+                new_profile = true;
+            }
+        });
+    });
+
+    if enter {
+        connect_index = Some(picker.selected.min(max));
+    }
+    if let Some(index) = connect_index {
+        app.connect_to_profile_at(index);
+        return;
+    }
+    if manage {
+        app.open_dashboard();
+        return;
+    }
+    if new_profile {
+        app.open_profile_form(None);
+        return;
+    }
+    if close || close_now {
+        return;
+    }
+    if busy {
+        return;
+    }
+    app.modal = Some(Modal::ConnectionPicker(picker));
 }
 
 // ---------------------------------------------------------------------------
@@ -1167,6 +1298,7 @@ fn setting_value(settings: &Settings, field: SettingsField) -> String {
         SettingsField::Timeout => format!("{} s", settings.query_timeout_secs),
         SettingsField::EditorRatio => format!("{} %", settings.editor_ratio),
         SettingsField::SidebarWidth => format!("{} cols", settings.sidebar_width),
+        SettingsField::UiScale => format!("{} %", settings.ui_scale_percent),
         SettingsField::Theme => settings.theme.label().to_string(),
         SettingsField::ShowLogs => yes_no(settings.show_logs),
     }
@@ -1193,6 +1325,10 @@ fn adjust_setting(settings: &mut Settings, field: SettingsField, direction: isiz
         SettingsField::SidebarWidth => {
             let next = (settings.sidebar_width as i64 + 2 * direction as i64).clamp(20, 80);
             settings.sidebar_width = next as u16;
+        }
+        SettingsField::UiScale => {
+            let next = (settings.ui_scale_percent as i64 + 5 * direction as i64).clamp(90, 130);
+            settings.ui_scale_percent = next as u16;
         }
         SettingsField::Theme => {
             settings.theme = if direction >= 0 {
@@ -1266,7 +1402,7 @@ fn input(
     if submit {
         match dialog.purpose {
             InputPurpose::SidebarFilter => {
-                app.tree.set_filter(dialog.input.value.clone());
+                app.catalog.filter = dialog.input.value;
                 app.toast(LogLevel::Info, "Explorer filter applied");
                 return;
             }
@@ -1275,6 +1411,14 @@ fn input(
                 app.commit_save_query();
                 return;
             }
+            InputPurpose::CreateFolder => match app.create_folder(&dialog.input.value) {
+                Ok(()) => return,
+                Err(err) => dialog.error = Some(err),
+            },
+            InputPurpose::RenameFolder { id } => match app.rename_folder(id, &dialog.input.value) {
+                Ok(()) => return,
+                Err(err) => dialog.error = Some(err),
+            },
         }
     }
     app.modal = Some(Modal::Input(dialog));

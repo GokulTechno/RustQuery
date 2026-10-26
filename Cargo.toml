@@ -1,6 +1,6 @@
 [package]
 name = "rustquery"
-version = "0.1.0"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.89"
 description = "RustQuery — a fast desktop SQL workbench for PostgreSQL, MySQL and SQLite"

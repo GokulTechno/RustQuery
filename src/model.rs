@@ -151,6 +151,9 @@ pub struct ConnectionProfile {
     pub password: String,
     #[serde(default)]
     pub ssl_mode: SslMode,
+    /// Folder this connection belongs to. `None` keeps it at the top of the explorer.
+    #[serde(default)]
+    pub folder_id: Option<Uuid>,
 }
 
 impl ConnectionProfile {
@@ -173,6 +176,7 @@ impl ConnectionProfile {
             } else {
                 SslMode::default()
             },
+            folder_id: None,
         }
     }
 
@@ -181,6 +185,37 @@ impl ConnectionProfile {
         self.name = format!("Local {}", self.driver.label());
         self.database = self.driver.default_database().to_string();
         self
+    }
+
+    /// Host and port, or the SQLite file path. The database name is a separate
+    /// explorer level.
+    pub fn host_label(&self) -> String {
+        if self.driver == Driver::Sqlite {
+            if self.database == ":memory:" {
+                "memory".to_string()
+            } else {
+                self.database.clone()
+            }
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+
+    /// Database shown under the host. SQLite uses the file name.
+    pub fn database_label(&self) -> String {
+        if self.driver == Driver::Sqlite {
+            if self.database == ":memory:" {
+                "in-memory".to_string()
+            } else {
+                std::path::Path::new(&self.database)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(self.database.as_str())
+                    .to_string()
+            }
+        } else {
+            self.database.clone()
+        }
     }
 
     pub fn endpoint(&self) -> String {
@@ -243,6 +278,22 @@ impl ConnectionProfile {
             self.user,
             self.ssl_mode.label()
         )
+    }
+}
+
+/// A named group of saved connections in the explorer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConnectionFolder {
+    pub id: Uuid,
+    pub name: String,
+}
+
+impl ConnectionFolder {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+        }
     }
 }
 

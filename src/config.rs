@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{ConnectionProfile, HistoryEntry, SavedTab};
+use crate::model::{ConnectionFolder, ConnectionProfile, HistoryEntry, SavedTab};
 
 /// UI colour scheme choice. The concrete palette lives in `desktop::theme`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -64,6 +64,13 @@ pub struct Settings {
     pub sidebar_width: u16,
     /// Show the execution log at the bottom of the workspace.
     pub show_logs: bool,
+    /// Interface font scale in percent (90–130). Affects editor, grids and chrome.
+    #[serde(default = "default_ui_scale_percent")]
+    pub ui_scale_percent: u16,
+}
+
+fn default_ui_scale_percent() -> u16 {
+    115
 }
 
 impl Default for Settings {
@@ -75,6 +82,7 @@ impl Default for Settings {
             editor_ratio: 42,
             sidebar_width: 34,
             show_logs: true,
+            ui_scale_percent: 115,
         }
     }
 }
@@ -85,6 +93,7 @@ impl Settings {
         self.query_timeout_secs = self.query_timeout_secs.clamp(1, 3_600);
         self.editor_ratio = self.editor_ratio.clamp(20, 80);
         self.sidebar_width = self.sidebar_width.clamp(20, 80);
+        self.ui_scale_percent = self.ui_scale_percent.clamp(90, 130);
     }
 }
 
@@ -94,16 +103,18 @@ pub enum SettingsField {
     Timeout,
     EditorRatio,
     SidebarWidth,
+    UiScale,
     Theme,
     ShowLogs,
 }
 
 impl SettingsField {
-    pub const ALL: [SettingsField; 6] = [
+    pub const ALL: [SettingsField; 7] = [
         SettingsField::RowLimit,
         SettingsField::Timeout,
         SettingsField::EditorRatio,
         SettingsField::SidebarWidth,
+        SettingsField::UiScale,
         SettingsField::Theme,
         SettingsField::ShowLogs,
     ];
@@ -114,6 +125,7 @@ impl SettingsField {
             SettingsField::Timeout => "Query timeout (s)",
             SettingsField::EditorRatio => "Editor height (%)",
             SettingsField::SidebarWidth => "Explorer width (columns)",
+            SettingsField::UiScale => "UI font scale (%)",
             SettingsField::Theme => "Colour theme",
             SettingsField::ShowLogs => "Show console",
         }
@@ -124,6 +136,8 @@ impl SettingsField {
 struct ProfilesFile {
     #[serde(default)]
     profiles: Vec<ConnectionProfile>,
+    #[serde(default)]
+    folders: Vec<ConnectionFolder>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -184,6 +198,7 @@ impl ConfigPaths {
 #[derive(Debug, Default)]
 pub struct LoadReport {
     pub profiles: Vec<ConnectionProfile>,
+    pub folders: Vec<ConnectionFolder>,
     pub settings: Settings,
     pub history: Vec<HistoryEntry>,
     pub workspace: WorkspaceFile,
@@ -214,6 +229,8 @@ impl Store {
         let (profiles_file, warn) =
             read_json_or_default::<ProfilesFile>(&self.paths.profiles, "profiles");
         report.profiles = profiles_file.profiles;
+        report.folders = profiles_file.folders;
+        crate::explorer::normalize_folders(&report.folders, &mut report.profiles);
         report.warnings.extend(warn);
 
         let (settings, warn) = read_json_or_default::<Settings>(&self.paths.settings, "settings");
@@ -240,9 +257,14 @@ impl Store {
         report
     }
 
-    pub fn save_profiles(&self, profiles: &[ConnectionProfile]) -> Result<()> {
+    pub fn save_profiles(
+        &self,
+        profiles: &[ConnectionProfile],
+        folders: &[ConnectionFolder],
+    ) -> Result<()> {
         let file = ProfilesFile {
             profiles: profiles.to_vec(),
+            folders: folders.to_vec(),
         };
         write_json(&self.paths, &self.paths.profiles, &file)
     }

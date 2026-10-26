@@ -13,6 +13,7 @@
 //! * [`desktop`] — `eframe` shell: menu, dashboard, workspace, editor and modals.
 //! * [`editor`] — multi-line editor buffer, selections, undo and highlighting.
 //! * [`grid`] — virtualised, filterable and sortable result-grid state.
+//! * [`explorer`] — saved-connection tree (folders, hosts, databases).
 //! * [`schema_tree`] — lazily loaded schema explorer state.
 //! * [`export`] — CSV, JSON and SQL INSERT serialisation.
 //! * [`clipboard`], [`model`] — shared value types and services.
@@ -28,6 +29,7 @@ pub mod config;
 pub mod db;
 pub mod desktop;
 pub mod editor;
+pub mod explorer;
 pub mod export;
 pub mod grid;
 pub mod model;

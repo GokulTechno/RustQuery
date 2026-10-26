@@ -163,8 +163,40 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-pub fn apply(ctx: &egui::Context, theme: ThemeKind) {
+/// Layout sizes derived from the user font-scale setting.
+#[derive(Debug, Clone, Copy)]
+pub struct UiMetrics {
+    pub body: f32,
+    pub small: f32,
+    pub heading: f32,
+    pub monospace: f32,
+    pub interact_height: f32,
+    pub tab_bar_height: f32,
+    pub status_bar_height: f32,
+    pub grid_row_height: f32,
+    pub grid_header_height: f32,
+    pub grid_gutter: f32,
+}
+
+pub fn metrics(scale_percent: u16) -> UiMetrics {
+    let s = (scale_percent.clamp(90, 130) as f32) / 100.0;
+    UiMetrics {
+        small: 12.0 * s,
+        body: 14.5 * s,
+        heading: 20.5 * s,
+        monospace: 14.0 * s,
+        interact_height: 30.0 * s,
+        tab_bar_height: 42.0 * s,
+        status_bar_height: 32.0 * s,
+        grid_row_height: 24.0 * s,
+        grid_header_height: 32.0 * s,
+        grid_gutter: 62.0 * s,
+    }
+}
+
+pub fn apply(ctx: &egui::Context, theme: ThemeKind, scale_percent: u16) {
     install_symbol_font(ctx);
+    let m = metrics(scale_percent);
     let p = Palette::for_theme(theme);
     let mut style = Style {
         visuals: if p.light {
@@ -234,32 +266,33 @@ pub fn apply(ctx: &egui::Context, theme: ThemeKind) {
     };
 
     style.text_styles = [
-        (
-            TextStyle::Small,
-            FontId::new(11.0, FontFamily::Proportional),
-        ),
-        (TextStyle::Body, FontId::new(13.5, FontFamily::Proportional)),
+        (TextStyle::Small, FontId::new(m.small, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(m.body, FontFamily::Proportional)),
         (
             TextStyle::Button,
-            FontId::new(13.5, FontFamily::Proportional),
+            FontId::new(m.body, FontFamily::Proportional),
         ),
         (
             TextStyle::Heading,
-            FontId::new(19.0, FontFamily::Proportional),
+            FontId::new(m.heading, FontFamily::Proportional),
         ),
         (
             TextStyle::Monospace,
-            FontId::new(13.0, FontFamily::Monospace),
+            FontId::new(m.monospace, FontFamily::Monospace),
         ),
     ]
     .into();
 
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 5.0);
-    style.spacing.interact_size.y = 26.0;
-    style.spacing.scroll.bar_width = 10.0;
+    style.spacing.item_spacing = egui::vec2(9.0 * (s(scale_percent)), 7.0 * (s(scale_percent)));
+    style.spacing.button_padding = egui::vec2(12.0 * (s(scale_percent)), 6.0 * (s(scale_percent)));
+    style.spacing.interact_size.y = m.interact_height;
+    style.spacing.scroll.bar_width = 11.0 * (s(scale_percent));
 
     ctx.set_style(style);
+}
+
+fn s(scale_percent: u16) -> f32 {
+    (scale_percent.clamp(90, 130) as f32) / 100.0
 }
 
 /// Ubuntu-Light has no arrows or geometric shapes. Appending Hack (the

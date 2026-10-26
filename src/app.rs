@@ -5,7 +5,7 @@
 //! as a [`WorkerMessage`]. Queries carry request ids so stale results (closed
 //! tabs, cancelled queries, replaced sessions) are ignored safely.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -18,11 +18,12 @@ use crate::clipboard::ClipboardService;
 use crate::config::{LoadReport, Settings, Store, ThemeKind, WorkspaceFile};
 use crate::db::{self, DbError, Session};
 use crate::editor::{Cursor, Editor, Motion};
+use crate::explorer::{Catalog, CatalogToggle};
 use crate::export::{self, ExportFormat, ExportScope};
 use crate::grid::ResultGrid;
 use crate::model::{
-    format_count, ConnectionProfile, Driver, HistoryEntry, LogEntry, LogLevel, QueryResult,
-    SavedTab, SslMode, TestOutcome,
+    format_count, ConnectionFolder, ConnectionProfile, Driver, HistoryEntry, LogEntry, LogLevel,
+    QueryResult, SavedTab, SslMode, TestOutcome,
 };
 use crate::schema_tree::{RowKind, SchemaTree, TableLoadRequest, TreeAction};
 
@@ -415,6 +416,7 @@ pub struct ProfileForm {
     pub user: TextInput,
     pub password: TextInput,
     pub ssl_mode: SslMode,
+    pub folder_id: Option<Uuid>,
     pub focus: usize,
     pub show_password: bool,
     pub testing: bool,
@@ -449,6 +451,7 @@ impl ProfileForm {
             user: TextInput::new(base.user),
             password: TextInput::new(base.password),
             ssl_mode: base.ssl_mode,
+            folder_id: base.folder_id,
             focus: if profile.is_some() {
                 Self::NAME
             } else {
@@ -574,6 +577,7 @@ impl ProfileForm {
                 user: String::new(),
                 password: String::new(),
                 ssl_mode: SslMode::Disable,
+                folder_id: self.folder_id,
             }
         } else {
             let port = self
@@ -592,6 +596,7 @@ impl ProfileForm {
                 user: self.user.value.trim().to_string(),
                 password: self.password.value.clone(),
                 ssl_mode: self.ssl_mode,
+                folder_id: self.folder_id,
             }
         };
         if profile.name.is_empty() {
@@ -683,9 +688,16 @@ pub struct SettingsDialog {
     pub backup: Settings,
 }
 
+/// Pick another saved profile while staying in the workspace.
+pub struct ConnectionPicker {
+    pub selected: usize,
+}
+
 pub enum InputPurpose {
     SaveQuery { tab_id: Uuid },
     SidebarFilter,
+    CreateFolder,
+    RenameFolder { id: Uuid },
 }
 
 pub struct InputDialog {
@@ -701,6 +713,7 @@ pub enum ConfirmAction {
     Quit,
     Disconnect,
     DeleteProfile(Uuid),
+    DeleteFolder(Uuid),
     CloseTab(Uuid),
     Connect(Box<ConnectionProfile>),
 }
@@ -723,11 +736,19 @@ pub enum Modal {
     Settings(SettingsDialog),
     Input(InputDialog),
     Info(InfoDialog),
+    ConnectionPicker(ConnectionPicker),
 }
 
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
+
+/// A connection that stays open while another profile is the editor's target.
+struct RetainedSession {
+    session: Session,
+    tree: SchemaTree,
+    schema_loading: bool,
+}
 
 pub struct App {
     pub store: Store,
@@ -744,6 +765,9 @@ pub struct App {
     pub tree: SchemaTree,
     pub schema_loading: bool,
     pub session: Option<Session>,
+    /// Sessions opened from the explorer that stay connected until quit.
+    retained: HashMap<Uuid, RetainedSession>,
+    pub catalog: Catalog,
     pub connect: Option<ConnectState>,
     pub dashboard: DashboardState,
     pub modal: Option<Modal>,
@@ -785,11 +809,13 @@ impl App {
             tabs: Vec::new(),
             active_tab: 0,
             tab_counter: 0,
-            view: View::Dashboard,
-            focus: Focus::Editor,
+            view: View::Workspace,
+            focus: Focus::Sidebar,
             tree: SchemaTree::new(),
             schema_loading: false,
             session: None,
+            retained: HashMap::new(),
+            catalog: Catalog::default(),
             connect: None,
             dashboard: DashboardState::default(),
             modal: None,
@@ -809,6 +835,7 @@ impl App {
             last_directory_hint: None,
         };
 
+        app.catalog = Catalog::from_saved(report.folders, &app.profiles);
         app.history.sort_by_key(|entry| std::cmp::Reverse(entry.at));
         app.history.truncate(500);
 
@@ -1051,7 +1078,10 @@ impl App {
     // -----------------------------------------------------------------
 
     pub fn save_profiles_now(&mut self) {
-        if let Err(err) = self.store.save_profiles(&self.profiles) {
+        if let Err(err) = self
+            .store
+            .save_profiles(&self.profiles, &self.catalog.folders)
+        {
             self.log(
                 LogLevel::Error,
                 format!("Could not save connection profiles: {err}"),
@@ -1123,10 +1153,9 @@ impl App {
     }
 
     pub fn request_quit(&mut self) {
-        let risky =
-            !self.running.is_empty() || self.session.as_ref().map(|s| s.tx_active).unwrap_or(false);
+        let risky = !self.running.is_empty() || self.any_transaction_open();
         if risky {
-            let message = if self.session.as_ref().map(|s| s.tx_active).unwrap_or(false) {
+            let message = if self.any_transaction_open() {
                 "There are running queries and/or an open transaction.\n\nQuitting closes the session; uncommitted changes will be rolled back by the server."
             } else {
                 "One or more queries are still running. Quitting will cancel them."
@@ -1149,6 +1178,7 @@ impl App {
             ConfirmAction::Quit => self.quit_now(),
             ConfirmAction::Disconnect => self.disconnect(),
             ConfirmAction::DeleteProfile(id) => self.delete_profile(id),
+            ConfirmAction::DeleteFolder(id) => self.delete_folder(id),
             ConfirmAction::CloseTab(id) => self.close_tab_force(id),
             ConfirmAction::Connect(profile) => self.start_connect(*profile),
         }
@@ -1174,10 +1204,6 @@ impl App {
 
     /// Switch to the workspace and mark a pane as the keyboard focus target.
     pub fn focus_pane(&mut self, focus: Focus) {
-        if self.session.is_none() && self.view == View::Dashboard {
-            self.toast(LogLevel::Warn, "Connect to a database first.");
-            return;
-        }
         self.view = View::Workspace;
         self.focus = focus;
         self.completion = None;
@@ -1193,6 +1219,129 @@ impl App {
         let text = node.label.clone();
         let message = self.clipboard.copy(&text);
         self.toast(LogLevel::Info, format!("Node · {message}"));
+    }
+
+    fn any_transaction_open(&self) -> bool {
+        self.session
+            .as_ref()
+            .map(|session| session.tx_active)
+            .unwrap_or(false)
+            || self
+                .retained
+                .values()
+                .any(|held| held.session.tx_active)
+    }
+
+    fn owns_session(&self, session_id: u64) -> bool {
+        self.session.as_ref().map(|session| session.id) == Some(session_id)
+            || self
+                .retained
+                .values()
+                .any(|held| held.session.id == session_id)
+    }
+
+    fn set_tx_active(&mut self, session_id: u64, active: bool) {
+        if self.session.as_ref().map(|session| session.id) == Some(session_id) {
+            if let Some(session) = self.session.as_mut() {
+                session.tx_active = active;
+            }
+            return;
+        }
+        if let Some(held) = self
+            .retained
+            .values_mut()
+            .find(|held| held.session.id == session_id)
+        {
+            held.session.tx_active = active;
+        }
+    }
+
+    fn live_profile_ids(&self) -> HashSet<Uuid> {
+        let mut live = HashSet::new();
+        if let Some(session) = &self.session {
+            live.insert(session.info.profile_id);
+        }
+        live.extend(self.retained.keys().copied());
+        live
+    }
+
+    pub fn profile_is_live(&self, profile_id: Uuid) -> bool {
+        self.live_profile_ids().contains(&profile_id)
+    }
+
+    /// Move the editor's session aside without closing its pool.
+    fn park_active(&mut self) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        let profile_id = session.info.profile_id;
+        let tree = std::mem::take(&mut self.tree);
+        let schema_loading = self.schema_loading;
+        self.schema_loading = false;
+        self.retained.insert(
+            profile_id,
+            RetainedSession {
+                session,
+                tree,
+                schema_loading,
+            },
+        );
+    }
+
+    /// Make an already-open profile the editor target. Pools stay open.
+    fn activate_open_profile(&mut self, profile_id: Uuid) -> bool {
+        if self
+            .session
+            .as_ref()
+            .map(|session| session.info.profile_id)
+            == Some(profile_id)
+        {
+            return true;
+        }
+        let Some(held) = self.retained.remove(&profile_id) else {
+            return false;
+        };
+        self.park_active();
+        self.session = Some(held.session);
+        self.tree = held.tree;
+        self.schema_loading = held.schema_loading;
+        true
+    }
+
+    fn tree_for(&self, profile_id: Uuid) -> Option<&SchemaTree> {
+        if self
+            .session
+            .as_ref()
+            .map(|session| session.info.profile_id)
+            == Some(profile_id)
+        {
+            return Some(&self.tree);
+        }
+        self.retained.get(&profile_id).map(|held| &held.tree)
+    }
+
+    pub fn schema_rows_for(&self, profile_id: Uuid) -> Option<&[crate::schema_tree::TreeRow]> {
+        self.tree_for(profile_id).map(|tree| tree.rows.as_slice())
+    }
+
+    pub fn tree_selection_for(&self, profile_id: Uuid) -> Option<String> {
+        self.tree_for(profile_id)
+            .and_then(|tree| tree.selected_id.clone())
+    }
+
+    pub fn schema_loading_for(&self, profile_id: Uuid) -> bool {
+        if self
+            .session
+            .as_ref()
+            .map(|session| session.info.profile_id)
+            == Some(profile_id)
+        {
+            return self.schema_loading;
+        }
+        self.retained
+            .get(&profile_id)
+            .map(|held| held.schema_loading)
+            .unwrap_or(false)
     }
 
     // -----------------------------------------------------------------
@@ -1216,6 +1365,39 @@ impl App {
 
     pub fn selected_profile(&self) -> Option<&ConnectionProfile> {
         self.profiles.get(self.dashboard.selected)
+    }
+
+    pub fn active_profile_index(&self) -> Option<usize> {
+        let id = self.session.as_ref().map(|session| session.info.profile_id)?;
+        self.profiles.iter().position(|profile| profile.id == id)
+    }
+
+    pub fn open_connection_picker(&mut self) {
+        if self.profiles.is_empty() {
+            self.toast(
+                LogLevel::Info,
+                "No saved connections yet — open the dashboard to create one.",
+            );
+            self.open_dashboard();
+            return;
+        }
+        let selected = self
+            .active_profile_index()
+            .unwrap_or(self.dashboard.selected)
+            .min(self.profiles.len() - 1);
+        self.modal = Some(Modal::ConnectionPicker(ConnectionPicker { selected }));
+    }
+
+    /// Connect to a saved profile by list index (workspace switcher or dashboard).
+    /// An existing session for another profile stays open.
+    pub fn connect_to_profile_at(&mut self, index: usize) {
+        if index >= self.profiles.len() {
+            return;
+        }
+        self.dashboard.selected = index;
+        let profile_id = self.profiles[index].id;
+        self.catalog.expanded_connections.insert(profile_id);
+        self.open_endpoint(profile_id);
     }
 
     /// Connect to the selected dashboard profile, or create one when the list
@@ -1313,7 +1495,7 @@ impl App {
         let attempt = self.next_attempt;
         self.next_attempt += 1;
         self.dashboard.connect_error = None;
-        self.view = View::Dashboard;
+        self.view = View::Workspace;
         self.completion = None;
         let target = format!("{} · {}", profile.name, profile.endpoint());
         self.log(LogLevel::Info, format!("Connecting to {target}…"));
@@ -1342,23 +1524,76 @@ impl App {
     }
 
     pub fn request_connect_or_confirm(&mut self, index: usize) {
-        let Some(profile) = self.profiles.get(index).cloned() else {
+        self.connect_to_profile_at(index);
+    }
+
+    /// Expand a host in the explorer and open its session if it is not already live.
+    pub fn open_endpoint(&mut self, profile_id: Uuid) {
+        self.view = View::Workspace;
+        self.catalog.expanded_connections.insert(profile_id);
+        self.catalog.expanded_endpoints.insert(profile_id);
+        if self.activate_open_profile(profile_id) {
+            self.catalog.expanded_databases.insert(profile_id);
+            self.catalog.connect_errors.remove(&profile_id);
+            self.focus = Focus::Sidebar;
+            if self.tree.roots.is_empty() && !self.schema_loading {
+                self.request_schemas();
+            }
+            return;
+        }
+        if self
+            .connect
+            .as_ref()
+            .map(|connect| connect.profile.id)
+            == Some(profile_id)
+        {
+            return;
+        }
+        if self.connect.is_some() {
+            self.toast(
+                LogLevel::Info,
+                "A connection attempt is already running.",
+            );
+            return;
+        }
+        let Some(profile) = self
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned()
+        else {
             return;
         };
-        let risky =
-            self.session.as_ref().map(|s| s.tx_active).unwrap_or(false) || !self.running.is_empty();
-        if risky {
-            self.modal = Some(Modal::Confirm(ConfirmDialog {
-                title: "Switch connection?".to_string(),
-                message: format!(
-                    "Connect to “{}”?\n\nRunning queries will be cancelled. If the current session has an open transaction it will be rolled back.",
-                    profile.name
-                ),
-                action: ConfirmAction::Connect(Box::new(profile)),
-                yes: false,
-            }));
+        self.start_connect(profile);
+    }
+
+    pub fn toggle_catalog_row(&mut self, id: &str) {
+        match self.catalog.toggle(id) {
+            CatalogToggle::Endpoint {
+                profile_id,
+                expanded: true,
+            } => self.open_endpoint(profile_id),
+            CatalogToggle::Database {
+                profile_id,
+                expanded: true,
+            } => {
+                if self.activate_open_profile(profile_id)
+                    && self.tree.roots.is_empty()
+                    && !self.schema_loading
+                {
+                    self.request_schemas();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn use_schema_row(&mut self, profile_id: Uuid) -> bool {
+        if self.activate_open_profile(profile_id) {
+            self.view = View::Workspace;
+            true
         } else {
-            self.start_connect(profile);
+            false
         }
     }
 
@@ -1435,6 +1670,10 @@ impl App {
         }
         if let Some(session) = self.session.take() {
             let had_tx = session.tx_active;
+            let profile_id = session.info.profile_id;
+            self.catalog.expanded_endpoints.remove(&profile_id);
+            self.catalog.expanded_databases.remove(&profile_id);
+            self.catalog.connect_errors.remove(&profile_id);
             self.log(
                 LogLevel::Info,
                 format!("Disconnected from “{}”.", session.profile.name),
@@ -1455,27 +1694,10 @@ impl App {
         self.tree.clear();
         self.schema_loading = false;
         self.completion = None;
-        self.view = View::Dashboard;
+        self.view = View::Workspace;
+        self.focus = Focus::Sidebar;
         self.ensure_dashboard_selection();
         self.toast(LogLevel::Info, "Disconnected");
-    }
-
-    fn clear_results_for_session_switch(&mut self) {
-        let ids: Vec<u64> = self.running.keys().copied().collect();
-        for id in ids {
-            if let Some(task) = self.running.remove(&id) {
-                task.abort.abort();
-            }
-        }
-        for tab in &mut self.tabs {
-            tab.running = None;
-            tab.result = None;
-            tab.grid = None;
-            tab.last_error = None;
-        }
-        if let Some(tx) = self.tx_pending.take() {
-            tx.abort.abort();
-        }
     }
 
     fn session_switch_needs_confirm(&self) -> bool {
@@ -1640,7 +1862,8 @@ impl App {
                 LogLevel::Warn,
                 "Connect to a database before running a query.",
             );
-            self.view = View::Dashboard;
+            self.view = View::Workspace;
+            self.focus = Focus::Sidebar;
             return;
         };
         if self.tx_pending.is_some() {
@@ -2309,6 +2532,172 @@ impl App {
         self.modal = Some(Modal::Profile(ProfileForm::new(profile, token)));
     }
 
+    pub fn open_profile_form_in_folder(&mut self, folder_id: Option<Uuid>) {
+        self.open_profile_form(None);
+        if let Some(Modal::Profile(form)) = &mut self.modal {
+            form.folder_id = folder_id;
+        }
+    }
+
+    pub fn prompt_new_folder(&mut self) {
+        self.completion = None;
+        self.modal = Some(Modal::Input(InputDialog {
+            title: "New folder".to_string(),
+            label: "Group saved connections in the explorer.".to_string(),
+            hint: "Folder name".to_string(),
+            input: TextInput::new(""),
+            purpose: InputPurpose::CreateFolder,
+            error: None,
+        }));
+    }
+
+    pub fn create_folder(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Folder name cannot be empty.".into());
+        }
+        let folder = ConnectionFolder::new(name);
+        self.catalog.expanded_folders.insert(folder.id);
+        self.catalog.folders.push(folder);
+        self.catalog
+            .folders
+            .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        self.save_profiles_now();
+        self.toast(LogLevel::Success, "Folder created");
+        Ok(())
+    }
+
+    pub fn prompt_rename_folder(&mut self, id: Uuid) {
+        let Some(name) = self
+            .catalog
+            .folders
+            .iter()
+            .find(|folder| folder.id == id)
+            .map(|folder| folder.name.clone())
+        else {
+            return;
+        };
+        self.completion = None;
+        self.modal = Some(Modal::Input(InputDialog {
+            title: "Rename folder".to_string(),
+            label: "Folder name".to_string(),
+            hint: "Folder name".to_string(),
+            input: TextInput::new(name),
+            purpose: InputPurpose::RenameFolder { id },
+            error: None,
+        }));
+    }
+
+    pub fn rename_folder(&mut self, id: Uuid, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Folder name cannot be empty.".into());
+        }
+        let Some(folder) = self.catalog.folders.iter_mut().find(|folder| folder.id == id) else {
+            return Err("That folder is no longer in the explorer.".into());
+        };
+        folder.name = name.to_string();
+        self.catalog
+            .folders
+            .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        self.save_profiles_now();
+        self.toast(LogLevel::Success, "Folder renamed");
+        Ok(())
+    }
+
+    pub fn confirm_delete_folder(&mut self, id: Uuid) {
+        let Some(folder) = self.catalog.folders.iter().find(|folder| folder.id == id) else {
+            return;
+        };
+        let name = folder.name.clone();
+        self.modal = Some(Modal::Confirm(ConfirmDialog {
+            title: "Remove folder?".to_string(),
+            message: format!(
+                "Remove folder “{name}”?\n\nConnections inside it stay saved and move to the top of the explorer. Open sessions stay connected."
+            ),
+            action: ConfirmAction::DeleteFolder(id),
+            yes: false,
+        }));
+    }
+
+    pub fn delete_folder(&mut self, id: Uuid) {
+        let before = self.catalog.folders.len();
+        self.catalog.folders.retain(|folder| folder.id != id);
+        if self.catalog.folders.len() == before {
+            return;
+        }
+        self.catalog.expanded_folders.remove(&id);
+        for profile in &mut self.profiles {
+            if profile.folder_id == Some(id) {
+                profile.folder_id = None;
+            }
+        }
+        self.save_profiles_now();
+        self.toast(
+            LogLevel::Info,
+            "Folder removed. Its connections are at the top of the explorer.",
+        );
+    }
+
+    pub fn move_profile_to_folder(&mut self, profile_id: Uuid, folder_id: Option<Uuid>) {
+        if let Some(folder_id) = folder_id {
+            if !self.catalog.folders.iter().any(|folder| folder.id == folder_id) {
+                return;
+            }
+            self.catalog.expanded_folders.insert(folder_id);
+        }
+        let Some(profile) = self
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+        else {
+            return;
+        };
+        profile.folder_id = folder_id;
+        self.catalog.expanded_connections.insert(profile_id);
+        self.save_profiles_now();
+    }
+
+    pub fn disconnect_profile(&mut self, profile_id: Uuid) {
+        if self
+            .session
+            .as_ref()
+            .map(|session| session.info.profile_id)
+            == Some(profile_id)
+        {
+            self.disconnect();
+            return;
+        }
+        if self.retained.remove(&profile_id).is_some() {
+            self.catalog.expanded_endpoints.remove(&profile_id);
+            self.catalog.expanded_databases.remove(&profile_id);
+            self.catalog.connect_errors.remove(&profile_id);
+            let name = self
+                .profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+                .map(|profile| profile.name.clone())
+                .unwrap_or_else(|| "connection".to_string());
+            self.log(LogLevel::Info, format!("Disconnected from “{name}”."));
+            self.toast(LogLevel::Info, "Disconnected");
+        }
+    }
+
+    fn session_profile_name(&self, session_id: u64) -> String {
+        if let Some(session) = self
+            .session
+            .as_ref()
+            .filter(|session| session.id == session_id)
+        {
+            return session.info.profile_name.clone();
+        }
+        self.retained
+            .values()
+            .find(|held| held.session.id == session_id)
+            .map(|held| held.session.info.profile_name.clone())
+            .unwrap_or_default()
+    }
+
     pub fn save_profile_form(&mut self) {
         let Some(Modal::Profile(form)) = &self.modal else {
             return;
@@ -2340,7 +2729,12 @@ impl App {
         }
         self.save_profiles_now();
         self.ensure_dashboard_selection();
-        self.view = View::Dashboard;
+        self.catalog.expanded_connections.insert(profile.id);
+        if let Some(folder_id) = profile.folder_id {
+            self.catalog.expanded_folders.insert(folder_id);
+        }
+        self.view = View::Workspace;
+        self.focus = Focus::Sidebar;
         if let Some(id) = edit_id {
             if let Some(index) = self.profiles.iter().position(|p| p.id == id) {
                 self.dashboard.selected = index;
@@ -2395,10 +2789,24 @@ impl App {
                 if self.connect.as_ref().map(|c| c.attempt) != Some(attempt) {
                     return;
                 }
+                let failed_profile = self.connect.as_ref().map(|connect| connect.profile.id);
                 self.connect = None;
                 match result {
                     Ok(session) => {
-                        self.clear_results_for_session_switch();
+                        let profile_id = session.info.profile_id;
+                        self.retained.remove(&profile_id);
+                        if self
+                            .session
+                            .as_ref()
+                            .map(|current| current.info.profile_id)
+                            != Some(profile_id)
+                        {
+                            self.park_active();
+                        } else {
+                            self.session = None;
+                            self.tree.clear();
+                            self.schema_loading = false;
+                        }
                         self.log(
                             LogLevel::Success,
                             format!(
@@ -2409,9 +2817,13 @@ impl App {
                                 session.info.current_user
                             ),
                         );
-                        self.schema_loading = false;
-                        self.tree.clear();
                         self.session = Some(session);
+                        self.tree.clear();
+                        self.schema_loading = false;
+                        self.catalog.expanded_connections.insert(profile_id);
+                        self.catalog.expanded_endpoints.insert(profile_id);
+                        self.catalog.expanded_databases.insert(profile_id);
+                        self.catalog.connect_errors.remove(&profile_id);
                         self.view = View::Workspace;
                         self.focus = Focus::Sidebar;
                         self.dashboard.connect_error = None;
@@ -2421,6 +2833,11 @@ impl App {
                     Err(err) => {
                         let message = err.console_lines().join("\n");
                         self.dashboard.connect_error = Some(err.summary.clone());
+                        if let Some(profile_id) = failed_profile {
+                            self.catalog
+                                .connect_errors
+                                .insert(profile_id, err.summary.clone());
+                        }
                         self.log_error("Connection failed", &err);
                         self.push_log(
                             LogLevel::Error,
@@ -2428,28 +2845,40 @@ impl App {
                             Some(message),
                             Some("connect".to_string()),
                         );
-                        self.view = View::Dashboard;
+                        self.view = View::Workspace;
+                        self.toast(LogLevel::Error, err.summary.clone());
                     }
                 }
             }
             WorkerMessage::SchemasLoaded { session_id, result } => {
-                if self.session.as_ref().map(|s| s.id) != Some(session_id) {
+                if !self.owns_session(session_id) {
                     return;
                 }
-                self.schema_loading = false;
+                let active = self.session.as_ref().map(|session| session.id) == Some(session_id);
                 match result {
                     Ok(schemas) => {
-                        let object_count: usize = schemas.iter().map(|s| s.objects.len()).sum();
-                        let Some(session) = self.session.as_ref() else {
-                            return;
-                        };
-                        let root_label = match session.driver() {
-                            Driver::Postgres => session.info.current_database.clone(),
-                            Driver::MySql => "Databases".to_string(),
-                            Driver::Sqlite => "Databases".to_string(),
-                        };
-                        let root_detail = session.info.driver.label();
-                        self.tree.load_schemas(&schemas, &root_label, root_detail);
+                        let object_count: usize = schemas.iter().map(|schema| schema.objects.len()).sum();
+                        if active {
+                            let Some(session) = self.session.as_ref() else {
+                                return;
+                            };
+                            let root_label = schema_root_label(session);
+                            let root_detail = session.info.driver.label();
+                            self.schema_loading = false;
+                            self.tree.load_schemas(&schemas, &root_label, root_detail);
+                        } else if let Some((root_label, root_detail)) =
+                            retained_schema_caption(&self.retained, session_id)
+                        {
+                            if let Some(held) = self
+                                .retained
+                                .values_mut()
+                                .find(|held| held.session.id == session_id)
+                            {
+                                held.schema_loading = false;
+                                held.tree
+                                    .load_schemas(&schemas, &root_label, root_detail);
+                            }
+                        }
                         self.log(
                             LogLevel::Info,
                             format!(
@@ -2462,8 +2891,18 @@ impl App {
                         );
                     }
                     Err(err) => {
+                        if active {
+                            self.schema_loading = false;
+                            self.tree.clear();
+                        } else if let Some(held) = self
+                            .retained
+                            .values_mut()
+                            .find(|held| held.session.id == session_id)
+                        {
+                            held.schema_loading = false;
+                            held.tree.clear();
+                        }
                         self.log_error("Schema discovery failed", &err);
-                        self.tree.clear();
                     }
                 }
             }
@@ -2474,12 +2913,22 @@ impl App {
                 table,
                 result,
             } => {
-                if self.session.as_ref().map(|s| s.id) != Some(session_id) {
+                if !self.owns_session(session_id) {
                     return;
                 }
+                let active = self.session.as_ref().map(|session| session.id) == Some(session_id);
                 match &result {
                     Ok(details) => {
-                        self.tree.complete_table_load(&node_id, Ok(details.clone()));
+                        if active {
+                            self.tree.complete_table_load(&node_id, Ok(details.clone()));
+                        } else if let Some(held) = self
+                            .retained
+                            .values_mut()
+                            .find(|held| held.session.id == session_id)
+                        {
+                            held.tree
+                                .complete_table_load(&node_id, Ok(details.clone()));
+                        }
                         self.log(
                             LogLevel::Info,
                             format!(
@@ -2491,8 +2940,17 @@ impl App {
                         );
                     }
                     Err(err) => {
-                        self.tree
-                            .complete_table_load(&node_id, Err(err.summary.clone()));
+                        if active {
+                            self.tree
+                                .complete_table_load(&node_id, Err(err.summary.clone()));
+                        } else if let Some(held) = self
+                            .retained
+                            .values_mut()
+                            .find(|held| held.session.id == session_id)
+                        {
+                            held.tree
+                                .complete_table_load(&node_id, Err(err.summary.clone()));
+                        }
                         self.log_error(
                             format!("Could not load metadata for {schema}.{table}"),
                             err,
@@ -2561,7 +3019,7 @@ impl App {
                 action,
                 result,
             } => {
-                if self.session.as_ref().map(|s| s.id) != Some(session_id) {
+                if !self.owns_session(session_id) {
                     return;
                 }
                 if self
@@ -2575,9 +3033,7 @@ impl App {
                 self.tx_pending = None;
                 match result {
                     Ok(()) => {
-                        if let Some(session) = self.session.as_mut() {
-                            session.tx_active = action == TxAction::Begin;
-                        }
+                        self.set_tx_active(session_id, action == TxAction::Begin);
                         self.log(LogLevel::Success, format!("{} successful.", action.label()));
                         self.toast(LogLevel::Success, format!("{} complete", action.label()));
                     }
@@ -2614,7 +3070,7 @@ impl App {
         result: Result<QueryResult, DbError>,
     ) {
         self.running.remove(&request_id);
-        if self.session.as_ref().map(|s| s.id) != Some(session_id) {
+        if !self.owns_session(session_id) {
             return;
         }
 
@@ -2647,9 +3103,7 @@ impl App {
         match result {
             Ok(query) => {
                 if let Some(new_state) = db::execute::tx_state_after(&running_sql) {
-                    if let Some(session) = self.session.as_mut() {
-                        session.tx_active = new_state;
-                    }
+                    self.set_tx_active(session_id, new_state);
                 }
                 let rows_returned = query.rows.len();
                 let affected = query.affected;
@@ -2657,11 +3111,7 @@ impl App {
                 let duration = query.duration_ms;
                 let has_columns = !query.columns.is_empty();
                 let result_sets = query.result_sets;
-                let connection = self
-                    .session
-                    .as_ref()
-                    .map(|s| s.info.profile_name.clone())
-                    .unwrap_or_default();
+                let connection = self.session_profile_name(session_id);
 
                 if let Some(tab) = self.tab_mut(tab_id) {
                     tab.last_error = None;
@@ -2725,11 +3175,7 @@ impl App {
                 }
             }
             Err(err) => {
-                let connection = self
-                    .session
-                    .as_ref()
-                    .map(|s| s.info.profile_name.clone())
-                    .unwrap_or_default();
+                let connection = self.session_profile_name(session_id);
                 if let Some(tab) = self.tab_mut(tab_id) {
                     tab.last_error = Some(err.clone());
                 }
@@ -2905,6 +3351,26 @@ const SQL_COMPLETIONS: &[&str] = &[
     "JSONB",
     "UUID",
 ];
+
+fn schema_root_label(session: &Session) -> String {
+    match session.driver() {
+        Driver::Postgres => session.info.current_database.clone(),
+        Driver::MySql | Driver::Sqlite => "Databases".to_string(),
+    }
+}
+
+fn retained_schema_caption(
+    retained: &HashMap<Uuid, RetainedSession>,
+    session_id: u64,
+) -> Option<(String, &'static str)> {
+    let held = retained
+        .values()
+        .find(|held| held.session.id == session_id)?;
+    Some((
+        schema_root_label(&held.session),
+        held.session.info.driver.label(),
+    ))
+}
 
 fn quote_pg_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))

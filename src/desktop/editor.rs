@@ -7,7 +7,7 @@
 
 use eframe::egui::{
     self, text::LayoutJob, Align2, Color32, CursorIcon, Event, FontId, Id, Key, Modifiers, Pos2,
-    Rect, ScrollArea, Sense, Stroke, TextFormat, Ui, Vec2,
+    Rect, ScrollArea, Sense, Stroke, TextFormat, TextStyle, Ui, Vec2,
 };
 
 use crate::app::{App, Focus};
@@ -15,7 +15,6 @@ use crate::editor::highlight::TokenKind;
 
 use super::theme::Palette;
 
-const FONT_SIZE: f32 = 13.0;
 const PAD_X: f32 = 8.0;
 const PAD_Y: f32 = 6.0;
 
@@ -48,7 +47,12 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
     );
     let painter = ui.painter_at(rect);
 
-    let font = FontId::monospace(FONT_SIZE);
+    let font = ui
+        .style()
+        .text_styles
+        .get(&TextStyle::Monospace)
+        .cloned()
+        .unwrap_or_else(|| FontId::monospace(14.0));
     let char_width = ui.fonts(|fonts| fonts.glyph_width(&font, '0')).max(6.0);
     let row_height = ui.fonts(|fonts| fonts.row_height(&font)).max(14.0) + 1.0;
     let line_count = app

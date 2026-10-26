@@ -31,6 +31,7 @@ pub struct DesktopApp {
     runtime: Runtime,
     worker_rx: UnboundedReceiver<WorkerMessage>,
     applied_theme: Option<ThemeKind>,
+    applied_ui_scale: Option<u16>,
     title: String,
 }
 
@@ -45,13 +46,15 @@ impl DesktopApp {
     ) -> Self {
         let app = App::new(store, report, worker_tx);
         let theme = app.theme_kind();
-        theme::apply(&cc.egui_ctx, theme);
+        let scale = app.settings.ui_scale_percent;
+        theme::apply(&cc.egui_ctx, theme, scale);
         Self {
             title: window_title(&app),
             app,
             runtime,
             worker_rx,
             applied_theme: Some(theme),
+            applied_ui_scale: Some(scale),
         }
     }
 
@@ -86,6 +89,8 @@ impl DesktopApp {
 
             if input.consume_shortcut(&KeyboardShortcut::new(cmd, Key::Q)) {
                 action = Some(Quit);
+            } else if input.consume_shortcut(&KeyboardShortcut::new(cmd_shift, Key::O)) {
+                action = Some(SwitchConnection);
             } else if input.consume_shortcut(&KeyboardShortcut::new(cmd_shift, Key::N)) {
                 action = Some(NewConnection);
             } else if input.consume_shortcut(&KeyboardShortcut::new(cmd, Key::T)) {
@@ -150,10 +155,8 @@ impl DesktopApp {
         };
         match action {
             Shortcut::Quit => self.app.request_quit(),
-            Shortcut::NewConnection => {
-                self.app.open_dashboard();
-                self.app.open_profile_form(None);
-            }
+            Shortcut::NewConnection => self.app.open_profile_form(None),
+            Shortcut::SwitchConnection => self.app.open_connection_picker(),
             Shortcut::NewTab => self.app.new_query_tab(),
             Shortcut::CloseTab => self.app.request_close_active_tab(),
             Shortcut::OpenFile => open_sql_dialog(&mut self.app),
@@ -206,7 +209,7 @@ impl DesktopApp {
             .frame(
                 Frame::new()
                     .fill(palette.panel)
-                    .inner_margin(Margin::symmetric(8, 4)),
+                    .inner_margin(Margin::symmetric(10, 6)),
             )
             .show(ctx, |ui| {
                 egui::menu::bar(ui, |ui| {
@@ -254,22 +257,33 @@ impl DesktopApp {
                             ui.close_menu();
                         }
                         if ui.button("New connection…\tCtrl+Shift+N").clicked() {
-                            self.app.open_dashboard();
                             self.app.open_profile_form(None);
                             ui.close_menu();
                         }
-                        let selected = self.app.selected_profile().cloned();
-                        if ui
-                            .add_enabled(
-                                selected.is_some() && self.app.connect.is_none(),
-                                egui::Button::new("Connect"),
-                            )
-                            .clicked()
-                        {
-                            self.app.activate_dashboard();
+                        if ui.button("New folder…").clicked() {
+                            self.app.prompt_new_folder();
                             ui.close_menu();
                         }
                         let connected = self.app.session.is_some();
+                        let can_connect = !self.app.profiles.is_empty()
+                            && self.app.connect.is_none();
+                        if ui
+                            .add_enabled(can_connect && !connected, egui::Button::new("Connect…"))
+                            .clicked()
+                        {
+                            self.app.connect_to_profile_at(self.app.dashboard.selected);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add_enabled(
+                                connected && self.app.connect.is_none(),
+                                egui::Button::new("Switch connection…\tCtrl+Shift+O"),
+                            )
+                            .clicked()
+                        {
+                            self.app.open_connection_picker();
+                            ui.close_menu();
+                        }
                         if ui
                             .add_enabled(connected, egui::Button::new("Disconnect\tCtrl+D"))
                             .clicked()
@@ -388,15 +402,16 @@ impl DesktopApp {
 
     fn show_status(&mut self, ctx: &egui::Context) {
         let palette = Palette::for_theme(self.app.theme_kind());
+        let bar_h = theme::metrics(self.app.settings.ui_scale_percent).status_bar_height;
         egui::TopBottomPanel::bottom("rustquery_status")
-            .exact_height(26.0)
+            .exact_height(bar_h)
             .frame(
                 Frame::new()
                     .fill(palette.panel)
-                    .inner_margin(Margin::symmetric(10, 4)),
+                    .inner_margin(Margin::symmetric(12, 5)),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_centered(|ui| {
                     let (dot, color) = if self.app.session.is_some() {
                         ("●", palette.green)
                     } else {
@@ -404,9 +419,7 @@ impl DesktopApp {
                     };
                     ui.label(RichText::new(dot).color(color));
                     ui.label(
-                        RichText::new(self.app.status_summary())
-                            .color(palette.subtext)
-                            .small(),
+                        RichText::new(self.app.status_summary()).color(palette.subtext),
                     );
                     if let Some(session) = &self.app.session {
                         if session.tx_active {
@@ -499,6 +512,7 @@ impl DesktopApp {
 enum Shortcut {
     Quit,
     NewConnection,
+    SwitchConnection,
     NewTab,
     CloseTab,
     OpenFile,
@@ -535,9 +549,11 @@ impl eframe::App for DesktopApp {
         self.handle_close_request(ctx);
 
         let theme = self.app.theme_kind();
-        if self.applied_theme != Some(theme) {
-            theme::apply(ctx, theme);
+        let scale = self.app.settings.ui_scale_percent;
+        if self.applied_theme != Some(theme) || self.applied_ui_scale != Some(scale) {
+            theme::apply(ctx, theme, scale);
             self.applied_theme = Some(theme);
+            self.applied_ui_scale = Some(scale);
         }
 
         let palette = Palette::for_theme(theme);

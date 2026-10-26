@@ -10,7 +10,7 @@ use rustquery::config::{Settings, ThemeKind};
 use rustquery::desktop::theme::{summary, Palette};
 use rustquery::export::{ExportFormat, ExportScope};
 use rustquery::grid::{ResultGrid, SortDirection};
-use rustquery::model::{ColumnMeta, Driver, QueryResult, SslMode};
+use rustquery::model::{ColumnMeta, ConnectionProfile, Driver, QueryResult, SslMode};
 use uuid::Uuid;
 
 fn sample_result() -> QueryResult {
@@ -132,6 +132,24 @@ fn grid_filters_and_cycles_sort_directions() {
 
     grid.cycle_sort(&result);
     assert!(grid.sort.is_none());
+}
+
+#[test]
+fn saved_profile_without_a_folder_still_loads() {
+    let profile: ConnectionProfile = serde_json::from_str(
+        r#"{
+            "name": "Local",
+            "driver": "postgres",
+            "host": "localhost",
+            "port": 5432,
+            "database": "app",
+            "user": "postgres"
+        }"#,
+    )
+    .expect("profiles saved before folders should still load");
+    assert!(profile.folder_id.is_none());
+    assert_eq!(profile.host_label(), "localhost:5432");
+    assert_eq!(profile.database_label(), "app");
 }
 
 #[test]

@@ -9,13 +9,15 @@ use crate::app::{App, Focus};
 use crate::grid::truncate_display;
 use crate::model::{format_count, LogLevel, QueryResult};
 
-use super::theme::Palette;
-
-const ROW_HEIGHT: f32 = 22.0;
-const HEADER_HEIGHT: f32 = 30.0;
-const GUTTER: f32 = 58.0;
+use super::theme::{metrics, Palette};
 
 pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
+    let ui_metrics = metrics(app.settings.ui_scale_percent);
+    let row_height = ui_metrics.grid_row_height;
+    let header_height = ui_metrics.grid_header_height;
+    let gutter = ui_metrics.grid_gutter;
+    let mono_font = FontId::monospace(ui_metrics.monospace);
+
     let Some(tab) = app.active_tab() else {
         return;
     };
@@ -228,7 +230,7 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 .collect()
         })
         .unwrap_or_default();
-    let total_width = GUTTER + widths.iter().sum::<f32>() + 2.0;
+    let total_width = gutter + widths.iter().sum::<f32>() + 2.0;
     let scroll_id = Id::new(("rustquery_grid_scroll", tab_id));
     let header_h_id = Id::new(("rustquery_grid_header_scroll", tab_id));
 
@@ -244,7 +246,7 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
         .show(ui, |ui| {
             ui.set_min_width(total_width);
             let (rect, response) =
-                ui.allocate_exact_size(Vec2::new(total_width, HEADER_HEIGHT), Sense::click());
+                ui.allocate_exact_size(Vec2::new(total_width, header_height), Sense::click());
             let painter = ui.painter_at(rect);
             painter.rect_filled(rect, 0.0, palette.panel);
             painter.line_segment(
@@ -260,19 +262,18 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
             let Some(result) = &tab.result else {
                 return;
             };
-            let font = FontId::monospace(12.0);
             painter.text(
-                Pos2::new(rect.left() + GUTTER - 8.0, rect.center().y),
+                Pos2::new(rect.left() + gutter - 8.0, rect.center().y),
                 Align2::RIGHT_CENTER,
                 "#",
-                font.clone(),
+                mono_font.clone(),
                 palette.muted,
             );
-            let mut x = rect.left() + GUTTER;
+            let mut x = rect.left() + gutter;
             for (index, column) in result.columns.iter().enumerate() {
                 let width = widths.get(index).copied().unwrap_or(100.0);
                 let cell =
-                    Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(width, HEADER_HEIGHT));
+                    Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(width, header_height));
                 painter.line_segment(
                     [
                         Pos2::new(cell.right(), cell.top() + 6.0),
@@ -301,14 +302,14 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                         Pos2::new(cell.left() + 6.0, cell.center().y),
                         Align2::LEFT_CENTER,
                         truncate_display(&label, (width / 7.0) as usize),
-                        font.clone(),
+                        mono_font.clone(),
                         color,
                     );
                 x += width;
             }
             if response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
-                    header_clicked = header_column_at(pos.x, rect.left(), &widths);
+                    header_clicked = header_column_at(pos.x, rect.left(), gutter, &widths);
                 }
             }
             if let Some(index) = header_clicked {
@@ -329,7 +330,7 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
     let mut click: Option<(usize, usize, bool)> = None;
     let mut body_scroll_rect: Option<Rect> = None;
     let available_height = ui.available_height().max(60.0);
-    let visible_rows = ((available_height - 4.0) / ROW_HEIGHT).max(1.0) as u16;
+    let visible_rows = ((available_height - 4.0) / row_height).max(1.0) as u16;
     if let Some(tab) = app.active_tab_mut() {
         if let Some(grid) = &mut tab.grid {
             grid.view_rows = visible_rows;
@@ -351,12 +352,12 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 return;
             };
             let rows = grid.visible_count();
-            let content_height = (rows as f32 * ROW_HEIGHT + 4.0).max(ROW_HEIGHT);
+            let content_height = (rows as f32 * row_height + 4.0).max(row_height);
             ui.set_min_size(Vec2::new(total_width, content_height));
             let origin = ui.max_rect().min;
-            let first = (viewport.min.y / ROW_HEIGHT).floor().max(0.0) as usize;
-            let last = (((viewport.max.y / ROW_HEIGHT).ceil() as usize) + 2).min(rows);
-            let font = FontId::monospace(12.0);
+            let first = (viewport.min.y / row_height).floor().max(0.0) as usize;
+            let last = (((viewport.max.y / row_height).ceil() as usize) + 2).min(rows);
+            let font = mono_font.clone();
             let body_rect = Rect::from_min_size(origin, Vec2::new(total_width, content_height));
             let response = ui.interact(body_rect, grid_id, Sense::click_and_drag());
 
@@ -366,8 +367,8 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
             if response.clicked() || response.drag_started() || response.double_clicked() {
                 response.request_focus();
                 if let Some(pos) = response.interact_pointer_pos() {
-                    if let Some(col) = body_column_at(pos.x, origin.x, &widths) {
-                        let row = ((pos.y - origin.y) / ROW_HEIGHT).floor().max(0.0) as usize;
+                    if let Some(col) = body_column_at(pos.x, origin.x, gutter, &widths) {
+                        let row = ((pos.y - origin.y) / row_height).floor().max(0.0) as usize;
                         if row < rows {
                             click = Some((row, col, response.double_clicked()));
                         }
@@ -377,14 +378,14 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
 
             if rows == 0 {
                 ui.painter().text(
-                    origin + Vec2::new(GUTTER + 12.0, 10.0),
+                    origin + Vec2::new(gutter + 12.0, 10.0),
                     Align2::LEFT_TOP,
                     if grid.filter.is_empty() {
                         "No rows returned."
                     } else {
                         "No rows match the current filter."
                     },
-                    FontId::proportional(13.0),
+                    FontId::proportional(ui_metrics.body),
                     palette.muted,
                 );
                 return;
@@ -394,15 +395,15 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
             painter.rect_filled(
                 Rect::from_min_max(
                     Pos2::new(origin.x, origin.y),
-                    Pos2::new(origin.x + GUTTER, origin.y + content_height),
+                    Pos2::new(origin.x + gutter, origin.y + content_height),
                 ),
                 0.0,
                 palette.panel,
             );
             for row in first..last {
-                let y = origin.y + row as f32 * ROW_HEIGHT;
+                let y = origin.y + row as f32 * row_height;
                 let row_rect =
-                    Rect::from_min_size(Pos2::new(origin.x, y), Vec2::new(total_width, ROW_HEIGHT));
+                    Rect::from_min_size(Pos2::new(origin.x, y), Vec2::new(total_width, row_height));
                 let selected_row = row == grid.sel_row;
                 if selected_row {
                     painter.rect_filled(row_rect, 0.0, palette.elevated);
@@ -410,7 +411,7 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                     painter.rect_filled(row_rect, 0.0, palette.surface.gamma_multiply(0.28));
                 }
                 painter.text(
-                    Pos2::new(origin.x + GUTTER - 8.0, y + ROW_HEIGHT / 2.0),
+                    Pos2::new(origin.x + gutter - 8.0, y + row_height / 2.0),
                     Align2::RIGHT_CENTER,
                     format!("{}", row + 1),
                     font.clone(),
@@ -422,10 +423,10 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 let Some(values) = result.rows.get(raw_row) else {
                     continue;
                 };
-                let mut x = origin.x + GUTTER;
+                let mut x = origin.x + gutter;
                 for (col, column) in result.columns.iter().enumerate() {
                     let width = widths.get(col).copied().unwrap_or(100.0);
-                    let cell = Rect::from_min_size(Pos2::new(x, y), Vec2::new(width, ROW_HEIGHT));
+                    let cell = Rect::from_min_size(Pos2::new(x, y), Vec2::new(width, row_height));
                     if selected_row && col == grid.sel_col {
                         painter.rect_stroke(
                             cell,
@@ -473,14 +474,14 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
             }
 
             if keyboard_moved {
-                let selected_x = origin.x + GUTTER + widths.iter().take(grid.sel_col).sum::<f32>();
+                let selected_x = origin.x + gutter + widths.iter().take(grid.sel_col).sum::<f32>();
                 let selected_width = widths.get(grid.sel_col).copied().unwrap_or(100.0);
                 body_scroll_rect = Some(Rect::from_min_size(
                     Pos2::new(
                         selected_x,
-                        origin.y + grid.sel_row as f32 * ROW_HEIGHT - ROW_HEIGHT,
+                        origin.y + grid.sel_row as f32 * row_height - row_height,
                     ),
-                    Vec2::new(selected_width, ROW_HEIGHT * 3.0),
+                    Vec2::new(selected_width, row_height * 3.0),
                 ));
             }
             if let Some(rect) = body_scroll_rect {
@@ -608,11 +609,11 @@ enum KeyAction {
     FocusEditor,
 }
 
-fn header_column_at(x: f32, origin_x: f32, widths: &[f32]) -> Option<usize> {
-    if x < origin_x + GUTTER {
+fn header_column_at(x: f32, origin_x: f32, gutter: f32, widths: &[f32]) -> Option<usize> {
+    if x < origin_x + gutter {
         return None;
     }
-    let mut cursor = origin_x + GUTTER;
+    let mut cursor = origin_x + gutter;
     for (index, width) in widths.iter().enumerate() {
         if x >= cursor && x < cursor + width {
             return Some(index);
@@ -622,8 +623,8 @@ fn header_column_at(x: f32, origin_x: f32, widths: &[f32]) -> Option<usize> {
     None
 }
 
-fn body_column_at(x: f32, origin_x: f32, widths: &[f32]) -> Option<usize> {
-    header_column_at(x, origin_x, widths)
+fn body_column_at(x: f32, origin_x: f32, gutter: f32, widths: &[f32]) -> Option<usize> {
+    header_column_at(x, origin_x, gutter, widths)
 }
 
 /// Empty result pane: either a query error or a gentle hint that nothing has
