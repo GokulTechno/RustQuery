@@ -2,7 +2,7 @@
 name = "rustquery"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.89"
 description = "RustQuery — a fast desktop SQL workbench for PostgreSQL, MySQL and SQLite"
 authors = ["Gokul Raj <gokulraj.kana@gmail.com>"]
 license = "MIT"

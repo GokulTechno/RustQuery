@@ -16,8 +16,9 @@ installing from source, verifying the installation, and uninstalling it again.
 
 For source builds you also need:
 
-- Rust **1.82+** (edition 2021), preferably installed with
-  [rustup](https://rustup.rs/).
+- Rust **1.89+** (edition 2021), preferably installed with
+  [rustup](https://rustup.rs/). Source builds honour `rust-toolchain.toml` in
+  the repository root.
 - `pkg-config` and OpenSSL development headers.
 - A C toolchain for native dependencies.
 

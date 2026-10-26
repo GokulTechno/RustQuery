@@ -54,7 +54,9 @@ The source code lives at <https://github.com/GokulTechno/RustQuery>.
 
 ## Requirements
 
-- Rust **1.82+** (edition 2021).
+- Rust **1.89+** (edition 2021). The repo pins the toolchain in
+  `rust-toolchain.toml`; run `rustup update` if `cargo` reports an older
+  compiler.
 - A graphical session with OpenGL support. RustQuery runs on X11 and Wayland
   on Linux; macOS and Windows use their native backends.
 - A reachable PostgreSQL and/or MySQL server for client/server databases.

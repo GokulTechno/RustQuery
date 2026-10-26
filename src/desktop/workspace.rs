@@ -217,18 +217,16 @@ fn show_toolbar(app: &mut App, ui: &mut Ui, palette: &Palette) {
                     {
                         app.cancel_current_query();
                     }
-                } else {
-                    if ui
-                        .add_enabled(
-                            connected,
-                            Button::new(RichText::new("▶ Run").color(palette.bg))
-                                .fill(palette.accent),
-                        )
-                        .on_hover_text("Execute selection or buffer (Ctrl+Enter / F5)")
-                        .clicked()
-                    {
-                        app.execute_current();
-                    }
+                } else if ui
+                    .add_enabled(
+                        connected,
+                        Button::new(RichText::new("▶ Run").color(palette.bg))
+                            .fill(palette.accent),
+                    )
+                    .on_hover_text("Execute selection or buffer (Ctrl+Enter / F5)")
+                    .clicked()
+                {
+                    app.execute_current();
                 }
 
                 ui.separator();

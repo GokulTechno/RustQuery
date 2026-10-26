@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ConnectionProfile, HistoryEntry, SavedTab};
 
-/// UI colour scheme choice. The concrete palette lives in `ui::theme`.
+/// UI colour scheme choice. The concrete palette lives in `desktop::theme`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeKind {
