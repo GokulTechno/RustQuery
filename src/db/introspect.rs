@@ -8,7 +8,7 @@ use std::time::Duration;
 use sqlx::mysql::MySqlRow;
 use sqlx::postgres::PgRow;
 use sqlx::sqlite::SqliteRow;
-use sqlx::Row;
+use sqlx::{Column, Row};
 
 use super::error::DbError;
 use super::DbPool;
@@ -17,6 +17,50 @@ use crate::model::{
 };
 
 const INTROSPECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn mysql_column_index(row: &MySqlRow, column: &str) -> Option<usize> {
+    row.columns()
+        .iter()
+        .position(|c| c.name().eq_ignore_ascii_case(column))
+}
+
+/// MySQL reports many `information_schema` identifier columns as `VARBINARY`.
+/// SQLx cannot decode those values as `String`, so fall back to UTF-8 bytes.
+/// Column labels are matched case-insensitively because unaliased selects
+/// return uppercase names (`COLUMN_NAME`) while aliased selects use lowercase.
+fn mysql_text(row: &MySqlRow, column: &str) -> String {
+    decode_mysql_text(row, column).unwrap_or_default()
+}
+
+fn mysql_opt_text(row: &MySqlRow, column: &str) -> Option<String> {
+    decode_mysql_text(row, column)
+}
+
+fn mysql_i64(row: &MySqlRow, column: &str) -> Option<i64> {
+    if let Ok(value) = row.try_get::<i64, _>(column) {
+        return Some(value);
+    }
+    if let Some(index) = mysql_column_index(row, column) {
+        return row.try_get(index).ok();
+    }
+    None
+}
+
+fn decode_mysql_text(row: &MySqlRow, column: &str) -> Option<String> {
+    if let Ok(text) = row.try_get::<String, _>(column) {
+        return Some(text);
+    }
+    if let Ok(bytes) = row.try_get::<Vec<u8>, _>(column) {
+        return Some(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    let index = mysql_column_index(row, column)?;
+    if let Ok(text) = row.try_get::<String, _>(index) {
+        return Some(text);
+    }
+    row.try_get::<Vec<u8>, _>(index)
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
 
 pub async fn list_schemas(pool: &DbPool) -> Result<Vec<SchemaEntry>, DbError> {
     let work = async {
@@ -108,9 +152,9 @@ async fn list_mysql(pool: &sqlx::MySqlPool) -> Result<Vec<SchemaEntry>, DbError>
 
     let mut schemas: Vec<SchemaEntry> = Vec::new();
     for row in rows {
-        let schema_name: String = row.try_get("schema_name").unwrap_or_default();
-        let table_name: Option<String> = row.try_get("table_name").unwrap_or_default();
-        let object_type: Option<String> = row.try_get("object_type").unwrap_or_default();
+        let schema_name = mysql_text(&row, "schema_name");
+        let table_name = mysql_opt_text(&row, "table_name");
+        let object_type = mysql_opt_text(&row, "object_type");
 
         if schemas
             .last()
@@ -428,17 +472,12 @@ async fn mysql_table_details(
     .map_err(|e| DbError::from_sqlx(e, ""))?
     .iter()
     .map(|row: &MySqlRow| ColumnInfo {
-        name: row.try_get("column_name").unwrap_or_default(),
-        data_type: row.try_get("column_type").unwrap_or_default(),
-        nullable: row
-            .try_get::<String, _>("is_nullable")
-            .map(|s| s.eq_ignore_ascii_case("YES"))
-            .unwrap_or(true),
-        default: row
-            .try_get::<Option<String>, _>("column_default")
-            .unwrap_or_default(),
-        key: row.try_get("column_key").unwrap_or_default(),
-        ordinal: row.try_get("ordinal_position").unwrap_or_default(),
+        name: mysql_text(row, "column_name"),
+        data_type: mysql_text(row, "column_type"),
+        nullable: mysql_text(row, "is_nullable").eq_ignore_ascii_case("YES"),
+        default: mysql_opt_text(row, "column_default"),
+        key: mysql_text(row, "column_key"),
+        ordinal: mysql_i64(row, "ordinal_position").unwrap_or_default(),
     })
     .collect();
 
@@ -460,15 +499,15 @@ async fn mysql_table_details(
     .map_err(|e| DbError::from_sqlx(e, ""))?
     .iter()
     .map(|row: &MySqlRow| {
-        let columns: String = row.try_get("columns").unwrap_or_default();
-        let name: String = row.try_get("index_name").unwrap_or_default();
-        let non_unique: i64 = row.try_get("non_unique").unwrap_or(1);
+        let columns = mysql_text(row, "columns");
+        let name = mysql_text(row, "index_name");
+        let non_unique = mysql_i64(row, "non_unique").unwrap_or(1);
         IndexInfo {
             primary: name == "PRIMARY",
             name,
             unique: non_unique == 0,
             columns: split_columns(&columns),
-            method: row.try_get("index_type").unwrap_or_default(),
+            method: mysql_text(row, "index_type"),
         }
     })
     .collect();
@@ -495,12 +534,12 @@ async fn mysql_table_details(
 
     let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
     for row in &fk_rows {
-        let name: String = row.try_get("constraint_name").unwrap_or_default();
-        let ref_schema: String = row.try_get("referenced_table_schema").unwrap_or_default();
-        let ref_table: String = row.try_get("referenced_table_name").unwrap_or_default();
-        let on_delete: String = row.try_get("delete_rule").unwrap_or_default();
-        let column: String = row.try_get("column_name").unwrap_or_default();
-        let ref_column: String = row.try_get("referenced_column_name").unwrap_or_default();
+        let name = mysql_text(row, "constraint_name");
+        let ref_schema = mysql_text(row, "referenced_table_schema");
+        let ref_table = mysql_text(row, "referenced_table_name");
+        let on_delete = mysql_text(row, "delete_rule");
+        let column = mysql_text(row, "column_name");
+        let ref_column = mysql_text(row, "referenced_column_name");
 
         let entry = match foreign_keys.last_mut() {
             Some(last)
