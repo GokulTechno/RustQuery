@@ -29,6 +29,13 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
         show_placeholder(app, ui, palette, error.as_ref());
         return;
     }
+    // A failed query keeps the previous result set visible so the user can
+    // compare it with the error. Show the error above the grid instead of
+    // silently returning the stale result.
+    if let Some(error) = error.as_ref() {
+        show_error_banner(app, ui, palette, error);
+        ui.add_space(4.0);
+    }
     let statement_only = app
         .active_tab()
         .and_then(|tab| tab.result.as_ref())
@@ -109,13 +116,21 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                         }
                     }
                 }
-                if !filter.is_empty()
-                    && ui.small_button("×").on_hover_text("Clear filter").clicked()
-                {
-                    filter.clear();
-                    if let Some(tab) = app.active_tab_mut() {
-                        if let (Some(result), Some(grid)) = (&tab.result, &mut tab.grid) {
-                            grid.clear_filter(result);
+                if !filter.is_empty() {
+                    let clear = ui.small_button("×");
+                    clear.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            true,
+                            "Clear result filter",
+                        )
+                    });
+                    if clear.on_hover_text("Clear filter").clicked() {
+                        filter.clear();
+                        if let Some(tab) = app.active_tab_mut() {
+                            if let (Some(result), Some(grid)) = (&tab.result, &mut tab.grid) {
+                                grid.clear_filter(result);
+                            }
                         }
                     }
                 }
@@ -400,6 +415,15 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 0.0,
                 palette.panel,
             );
+            // Only paint columns intersecting the horizontal viewport. Wide
+            // result sets otherwise cost rows × columns painter calls even
+            // when most cells are off-screen.
+            let column_window = visible_column_range(viewport, origin.x, gutter, &widths);
+            let first_column_x = column_window
+                .map(|(first_col, _)| {
+                    origin.x + gutter + widths.iter().take(first_col).sum::<f32>()
+                })
+                .unwrap_or(origin.x + gutter);
             for row in first..last {
                 let y = origin.y + row as f32 * row_height;
                 let row_rect =
@@ -423,8 +447,14 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 let Some(values) = result.rows.get(raw_row) else {
                     continue;
                 };
-                let mut x = origin.x + gutter;
-                for (col, column) in result.columns.iter().enumerate() {
+                let Some((first_col, last_col)) = column_window else {
+                    continue;
+                };
+                let mut x = first_column_x;
+                for col in first_col..=last_col {
+                    let Some(column) = result.columns.get(col) else {
+                        continue;
+                    };
                     let width = widths.get(col).copied().unwrap_or(100.0);
                     let cell = Rect::from_min_size(Pos2::new(x, y), Vec2::new(width, row_height));
                     if selected_row && col == grid.sel_col {
@@ -609,6 +639,25 @@ enum KeyAction {
     FocusEditor,
 }
 
+fn visible_column_range(
+    viewport: Rect,
+    origin_x: f32,
+    gutter: f32,
+    widths: &[f32],
+) -> Option<(usize, usize)> {
+    let mut x = origin_x + gutter;
+    let mut first: Option<usize> = None;
+    let mut last = 0;
+    for (index, width) in widths.iter().enumerate() {
+        if x + width > viewport.min.x && x < viewport.max.x {
+            first.get_or_insert(index);
+            last = index;
+        }
+        x += width;
+    }
+    first.map(|first| (first, last))
+}
+
 fn header_column_at(x: f32, origin_x: f32, gutter: f32, widths: &[f32]) -> Option<usize> {
     if x < origin_x + gutter {
         return None;
@@ -625,6 +674,45 @@ fn header_column_at(x: f32, origin_x: f32, gutter: f32, widths: &[f32]) -> Optio
 
 fn body_column_at(x: f32, origin_x: f32, gutter: f32, widths: &[f32]) -> Option<usize> {
     header_column_at(x, origin_x, gutter, widths)
+}
+
+/// Compact error banner shown above a previous result set.
+fn show_error_banner(app: &mut App, ui: &mut Ui, palette: &Palette, error: &crate::db::DbError) {
+    Frame::new()
+        .fill(palette.red.gamma_multiply(0.12))
+        .stroke(Stroke::new(1.0_f32, palette.red.gamma_multiply(0.7)))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(10, 7))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Query failed").strong().color(palette.red));
+                ui.label(RichText::new(&error.summary).small().color(palette.text));
+                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("Dismiss")
+                        .on_hover_text("Hide this error and keep the previous result")
+                        .clicked()
+                    {
+                        if let Some(tab) = app.active_tab_mut() {
+                            tab.last_error = None;
+                        }
+                    }
+                    if ui
+                        .small_button("Copy error")
+                        .on_hover_text("Copy the full database error to the clipboard")
+                        .clicked()
+                    {
+                        let message = app.clipboard.copy(&error.to_string());
+                        app.toast(LogLevel::Info, message);
+                    }
+                });
+            });
+            ui.label(
+                RichText::new("Showing the previous result set.")
+                    .small()
+                    .color(palette.muted),
+            );
+        });
 }
 
 /// Empty result pane: either a query error or a gentle hint that nothing has

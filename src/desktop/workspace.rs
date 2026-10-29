@@ -28,10 +28,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 .inner_margin(Margin::symmetric(8, 4)),
         )
         .show_inside(ui, |ui| {
-            ui.with_layout(
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| show_tabs(app, ui, &palette),
-            );
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                show_tabs(app, ui, &palette)
+            });
         });
 
     // Console is shown first so it occupies the very bottom; the results
@@ -66,6 +65,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             .frame(
                 Frame::new()
                     .fill(palette.bg)
+                    .stroke(if app.focus == Focus::Results {
+                        Stroke::new(1.5_f32, palette.accent)
+                    } else {
+                        Stroke::new(0.0_f32, Color32::TRANSPARENT)
+                    })
                     .inner_margin(Margin::symmetric(6, 4)),
             )
             .show_inside(ui, |ui| results::show(app, ui, &palette));
@@ -133,17 +137,15 @@ fn show_tabs(app: &mut App, ui: &mut Ui, palette: &Palette) {
                                 } else {
                                     palette.subtext
                                 }))
-                                    .fill(if selected {
-                                        palette.selection
-                                    } else {
-                                        Color32::TRANSPARENT
-                                    })
-                                    .stroke(
-                                        Stroke::new(
-                                            if selected { 1.0 } else { 0.0 },
-                                            palette.accent.gamma_multiply(0.75),
-                                        ),
-                                    ),
+                                .fill(if selected {
+                                    palette.selection
+                                } else {
+                                    Color32::TRANSPARENT
+                                })
+                                .stroke(Stroke::new(
+                                    if selected { 1.0 } else { 0.0 },
+                                    palette.accent.gamma_multiply(0.75),
+                                )),
                             );
                             if response.clicked() {
                                 activate = Some(*index);
@@ -154,23 +156,26 @@ fn show_tabs(app: &mut App, ui: &mut Ui, palette: &Palette) {
                             let close_response = ui.add(
                                 Button::new(RichText::new("×").color(palette.muted)).frame(false),
                             );
-                            if close_response
-                                .on_hover_text("Close tab (Ctrl+W)")
-                                .clicked()
-                            {
+                            close_response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    "Close tab",
+                                )
+                            });
+                            if close_response.on_hover_text("Close tab (Ctrl+W)").clicked() {
                                 close = Some(*index);
                             }
                         });
                     }
                 });
             });
-        if ui
-            .add(
-                Button::new(RichText::new("+").color(palette.accent).strong()).frame(false),
-            )
-            .on_hover_text("New query tab (Ctrl+T)")
-            .clicked()
-        {
+        let new_tab =
+            ui.add(Button::new(RichText::new("+").color(palette.accent).strong()).frame(false));
+        new_tab.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New query tab")
+        });
+        if new_tab.on_hover_text("New query tab (Ctrl+T)").clicked() {
             app.new_query_tab();
             app.focus = Focus::Editor;
         }
@@ -178,11 +183,7 @@ fn show_tabs(app: &mut App, ui: &mut Ui, palette: &Palette) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if app.connect.is_some() {
                 ui.spinner();
-                ui.label(
-                    RichText::new("Connecting…")
-                        .small()
-                        .color(palette.yellow),
-                );
+                ui.label(RichText::new("Connecting…").small().color(palette.yellow));
             }
             if let Some(session) = &app.session {
                 let color = palette.driver_color(session.info.driver);
@@ -193,10 +194,7 @@ fn show_tabs(app: &mut App, ui: &mut Ui, palette: &Palette) {
                     session.info.current_database
                 );
                 if ui
-                    .add(
-                        Button::new(RichText::new(label).color(color))
-                            .frame(false),
-                    )
+                    .add(Button::new(RichText::new(label).color(color)).frame(false))
                     .on_hover_text("Switch connection (Ctrl+Shift+O)")
                     .clicked()
                 {
@@ -308,7 +306,7 @@ fn show_toolbar(app: &mut App, ui: &mut Ui, palette: &Palette) {
                 if ui
                     .add_enabled(
                         app.active_tab()
-                            .map(|tab| !tab.editor.text().trim().is_empty())
+                            .map(|tab| tab.editor.has_content())
                             .unwrap_or(false),
                         Button::new("Save SQL"),
                     )
@@ -342,6 +340,8 @@ fn show_toolbar(app: &mut App, ui: &mut Ui, palette: &Palette) {
                                     .small(),
                             );
                             ui.spinner();
+                        } else if let Some(error) = &tab.last_error {
+                            ui.label(RichText::new(&error.summary).color(palette.red).small());
                         } else if let Some(result) = &tab.result {
                             let mut summary = if result.columns.is_empty() {
                                 format!(
@@ -361,8 +361,6 @@ fn show_toolbar(app: &mut App, ui: &mut Ui, palette: &Palette) {
                                 summary.push_str(" · limit");
                             }
                             ui.label(RichText::new(summary).color(palette.green).small());
-                        } else if let Some(error) = &tab.last_error {
-                            ui.label(RichText::new(&error.summary).color(palette.red).small());
                         } else {
                             ui.label(
                                 RichText::new(format!(
@@ -492,8 +490,11 @@ pub fn show_sidebar(app: &mut App, ui: &mut Ui) {
         ui.label(RichText::new("Explorer").strong().color(palette.text));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let connected = app.session.is_some();
-            if ui
-                .add_enabled(connected, Button::new("⟳").frame(false))
+            let refresh = ui.add_enabled(connected, Button::new("⟳").frame(false));
+            refresh.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, connected, "Refresh schema")
+            });
+            if refresh
                 .on_hover_text("Refresh schema for the active connection")
                 .clicked()
             {
@@ -530,8 +531,14 @@ pub fn show_sidebar(app: &mut App, ui: &mut Ui) {
         if response.changed() {
             app.catalog.filter = filter.clone();
         }
-        if !filter.is_empty() && ui.small_button("×").clicked() {
-            app.catalog.filter.clear();
+        if !filter.is_empty() {
+            let clear = ui.small_button("×");
+            clear.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Clear explorer filter")
+            });
+            if clear.on_hover_text("Clear the explorer filter").clicked() {
+                app.catalog.filter.clear();
+            }
         }
     });
     ui.label(
@@ -809,7 +816,12 @@ pub fn show_sidebar(app: &mut App, ui: &mut Ui) {
         app.confirm_delete_folder(id);
     }
     if let Some(id) = edit_profile {
-        if let Some(profile) = app.profiles.iter().find(|profile| profile.id == id).cloned() {
+        if let Some(profile) = app
+            .profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .cloned()
+        {
             app.open_profile_form(Some(&profile));
         }
     }
@@ -828,7 +840,11 @@ pub fn show_sidebar(app: &mut App, ui: &mut Ui) {
         app.disconnect_profile(profile_id);
     }
 
-    if !app.profiles.iter().any(|profile| app.profile_is_live(profile.id)) {
+    if !app
+        .profiles
+        .iter()
+        .any(|profile| app.profile_is_live(profile.id))
+    {
         ui.separator();
         show_recent_history(app, ui, &palette);
     }
@@ -841,6 +857,7 @@ enum ExplorerHit {
     DoubleClick,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_explorer_row(
     ui: &mut Ui,
     palette: &Palette,
@@ -892,28 +909,21 @@ fn draw_explorer_row(
                 } else {
                     ui.add_space(11.0);
                 }
-                ui.label(
-                    RichText::new(icon)
-                        .small()
-                        .color(if error { palette.red } else { palette.accent }),
-                );
+                ui.label(RichText::new(icon).small().color(if error {
+                    palette.red
+                } else {
+                    palette.accent
+                }));
                 let text = ui.add(
-                    egui::Label::new(
-                        RichText::new(label)
-                            .color(text_color)
-                            .small()
-                            .monospace(),
-                    )
-                    .sense(Sense::click()),
+                    egui::Label::new(RichText::new(label).color(text_color).small().monospace())
+                        .sense(Sense::click()),
                 );
                 if !detail.is_empty() {
-                    ui.label(
-                        RichText::new(detail).small().color(if error {
-                            palette.red
-                        } else {
-                            palette.muted
-                        }),
-                    );
+                    ui.label(RichText::new(detail).small().color(if error {
+                        palette.red
+                    } else {
+                        palette.muted
+                    }));
                 }
                 if text.double_clicked() {
                     on_activate(ExplorerHit::DoubleClick);

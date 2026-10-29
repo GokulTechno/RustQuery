@@ -42,7 +42,7 @@ impl Palette {
                 elevated: rgb(0x45, 0x47, 0x5a),
                 text: rgb(0xcd, 0xd6, 0xf4),
                 subtext: rgb(0xa6, 0xad, 0xc8),
-                muted: rgb(0x7f, 0x84, 0x9c),
+                muted: rgb(0x8b, 0x90, 0xa8),
                 accent: rgb(0xcb, 0xa6, 0xf7),
                 accent_soft: rgb(0xf5, 0xc2, 0xe7),
                 green: rgb(0xa6, 0xe3, 0xa1),
@@ -61,14 +61,14 @@ impl Palette {
                 elevated: rgb(0x43, 0x4c, 0x5e),
                 text: rgb(0xec, 0xef, 0xf4),
                 subtext: rgb(0xd8, 0xde, 0xe9),
-                muted: rgb(0x81, 0x8c, 0xa1),
+                muted: rgb(0x9a, 0xa7, 0xbf),
                 accent: rgb(0x88, 0xc0, 0xd0),
                 accent_soft: rgb(0x8f, 0xbc, 0xbb),
                 green: rgb(0xa3, 0xbe, 0x8c),
                 yellow: rgb(0xeb, 0xcb, 0x8b),
-                red: rgb(0xbf, 0x61, 0x6a),
-                blue: rgb(0x81, 0xa1, 0xc1),
-                purple: rgb(0xb4, 0x8e, 0xad),
+                red: rgb(0xe5, 0x94, 0x9d),
+                blue: rgb(0x8f, 0xb1, 0xd1),
+                purple: rgb(0xc7, 0x9f, 0xc2),
                 border: rgb(0x4c, 0x56, 0x6a),
                 selection: rgb(0x4c, 0x56, 0x6a),
                 light: false,
@@ -80,7 +80,7 @@ impl Palette {
                 elevated: rgb(0x52, 0x56, 0x6e),
                 text: rgb(0xf8, 0xf8, 0xf2),
                 subtext: rgb(0xc8, 0xc8, 0xd8),
-                muted: rgb(0x62, 0x72, 0xa4),
+                muted: rgb(0x8b, 0x9b, 0xc9),
                 accent: rgb(0xbd, 0x93, 0xf9),
                 accent_soft: rgb(0xff, 0x79, 0xc6),
                 green: rgb(0x50, 0xfa, 0x7b),
@@ -99,14 +99,14 @@ impl Palette {
                 elevated: rgb(0xcc, 0xd0, 0xda),
                 text: rgb(0x4c, 0x4f, 0x69),
                 subtext: rgb(0x5c, 0x5f, 0x77),
-                muted: rgb(0x8c, 0x8f, 0xa1),
-                accent: rgb(0x88, 0x39, 0xef),
+                muted: rgb(0x5f, 0x62, 0x73),
+                accent: rgb(0x7c, 0x2e, 0xe0),
                 accent_soft: rgb(0xea, 0x76, 0xcb),
-                green: rgb(0x40, 0xa0, 0x2b),
-                yellow: rgb(0xdf, 0x8e, 0x1d),
-                red: rgb(0xd2, 0x0f, 0x39),
-                blue: rgb(0x1e, 0x66, 0xf5),
-                purple: rgb(0x72, 0x87, 0xfd),
+                green: rgb(0x2a, 0x71, 0x1b),
+                yellow: rgb(0x8f, 0x54, 0x00),
+                red: rgb(0xc5, 0x0e, 0x34),
+                blue: rgb(0x18, 0x59, 0xd6),
+                purple: rgb(0x4c, 0x56, 0xc4),
                 border: rgb(0xbc, 0xc0, 0xcc),
                 selection: rgb(0xac, 0xb0, 0xbe),
                 light: true,
@@ -266,8 +266,14 @@ pub fn apply(ctx: &egui::Context, theme: ThemeKind, scale_percent: u16) {
     };
 
     style.text_styles = [
-        (TextStyle::Small, FontId::new(m.small, FontFamily::Proportional)),
-        (TextStyle::Body, FontId::new(m.body, FontFamily::Proportional)),
+        (
+            TextStyle::Small,
+            FontId::new(m.small, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Body,
+            FontId::new(m.body, FontFamily::Proportional),
+        ),
         (
             TextStyle::Button,
             FontId::new(m.body, FontFamily::Proportional),
@@ -331,24 +337,46 @@ mod tests {
     fn palettes_have_readable_contrast() {
         for theme in ThemeKind::ALL {
             let p = Palette::for_theme(theme);
-            let text = relative_luminance(p.text);
-            let panel = relative_luminance(p.panel);
-            let contrast = (text.max(panel) + 0.05) / (text.min(panel) + 0.05);
+            // Body copy, muted hints and semantic labels all appear directly
+            // on the panel or the editor/result background.
+            for (name, color) in [
+                ("text", p.text),
+                ("subtext", p.subtext),
+                ("muted", p.muted),
+                ("accent", p.accent),
+                ("green", p.green),
+                ("yellow", p.yellow),
+                ("red", p.red),
+                ("blue", p.blue),
+                ("purple", p.purple),
+            ] {
+                for (surface_name, surface) in [("panel", p.panel), ("background", p.bg)] {
+                    let contrast = contrast_ratio(color, surface);
+                    assert!(
+                        contrast >= 4.5,
+                        "{} {name} on {surface_name} is only {contrast:.2}:1",
+                        theme.label()
+                    );
+                }
+            }
             assert!(
-                contrast > 4.5,
-                "{} contrast is only {contrast:.2}",
+                contrast_ratio(p.on_accent(), p.accent) >= 4.5,
+                "{} accent button label is unreadable",
                 theme.label()
             );
-            let on_accent = relative_luminance(p.on_accent());
-            let accent = relative_luminance(p.accent);
-            let accent_contrast = (on_accent.max(accent) + 0.05) / (on_accent.min(accent) + 0.05);
             assert!(
-                accent_contrast > 4.5,
-                "{} accent label contrast is only {accent_contrast:.2}",
+                contrast_ratio(p.on_destructive(), p.red) >= 4.5,
+                "{} destructive button label is unreadable",
                 theme.label()
             );
             assert!(!summary(theme).is_empty());
         }
+    }
+
+    fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+        let a = relative_luminance(a);
+        let b = relative_luminance(b);
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 
     fn relative_luminance(color: Color32) -> f32 {

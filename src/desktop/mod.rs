@@ -15,7 +15,9 @@ pub mod workspace;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use eframe::egui::{self, Align2, Color32, Frame, Key, KeyboardShortcut, Margin, Modifiers, RichText};
+use eframe::egui::{
+    self, Align2, Color32, Frame, Key, KeyboardShortcut, Margin, Modifiers, RichText,
+};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
@@ -225,7 +227,7 @@ impl DesktopApp {
                         let can_save = self
                             .app
                             .active_tab()
-                            .map(|tab| !tab.editor.text().trim().is_empty())
+                            .map(|tab| tab.editor.has_content())
                             .unwrap_or(false);
                         if ui
                             .add_enabled(can_save, egui::Button::new("Save SQL file…\tCtrl+S"))
@@ -265,8 +267,8 @@ impl DesktopApp {
                             ui.close_menu();
                         }
                         let connected = self.app.session.is_some();
-                        let can_connect = !self.app.profiles.is_empty()
-                            && self.app.connect.is_none();
+                        let can_connect =
+                            !self.app.profiles.is_empty() && self.app.connect.is_none();
                         if ui
                             .add_enabled(can_connect && !connected, egui::Button::new("Connect…"))
                             .clicked()
@@ -418,9 +420,7 @@ impl DesktopApp {
                         ("○", palette.muted)
                     };
                     ui.label(RichText::new(dot).color(color));
-                    ui.label(
-                        RichText::new(self.app.status_summary()).color(palette.subtext),
-                    );
+                    ui.label(RichText::new(self.app.status_summary()).color(palette.subtext));
                     if let Some(session) = &self.app.session {
                         if session.tx_active {
                             ui.separator();
@@ -498,11 +498,7 @@ impl DesktopApp {
                         ui.set_min_width(200.0);
                         ui.set_max_width(420.0);
                         ui.label(RichText::new(&toast.text).color(palette.text).strong());
-                        ui.label(
-                            RichText::new(toast.level.label())
-                                .small()
-                                .color(color),
-                        );
+                        ui.label(RichText::new(toast.level.label()).small().color(color));
                     });
             });
     }
@@ -573,7 +569,13 @@ impl eframe::App for DesktopApp {
                 .resizable(true)
                 .default_width(sidebar_width)
                 .width_range(200.0..=560.0)
-                .frame(Frame::new().fill(palette.panel))
+                .frame(Frame::new().fill(palette.panel).stroke(
+                    if self.app.focus == Focus::Sidebar {
+                        egui::Stroke::new(1.5_f32, palette.accent)
+                    } else {
+                        egui::Stroke::new(0.0_f32, Color32::TRANSPARENT)
+                    },
+                ))
                 .show(ctx, |ui| {
                     workspace::show_sidebar(&mut self.app, ui);
                     let width = ui.available_width().max(200.0);

@@ -53,6 +53,8 @@ struct Snapshot {
     lines: Vec<String>,
     cursor: Cursor,
     anchor: Option<Cursor>,
+    revision: u64,
+    content_present: bool,
 }
 
 #[derive(Debug)]
@@ -68,16 +70,21 @@ pub struct Editor {
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     last_edit: Option<(EditKind, Instant)>,
-    /// Text as of the last load/save, used for the dirty indicator.
-    saved_lines: Vec<String>,
+    /// Monotonic edit counter. Comparing it with `saved_revision` makes the
+    /// dirty check O(1) instead of comparing every line with a saved copy.
+    revision: u64,
+    saved_revision: u64,
+    /// Cached `!text().trim().is_empty()` so toolbars do not rebuild the whole
+    /// buffer just to enable or disable a button.
+    content_present: bool,
     syntax: SyntaxCache,
 }
 
 impl Editor {
     pub fn new(text: &str) -> Self {
         let lines = normalize_text(text);
+        let content_present = lines.iter().any(|line| !line.trim().is_empty());
         Self {
-            saved_lines: lines.clone(),
             syntax: SyntaxCache::default(),
             lines,
             cursor: Cursor::default(),
@@ -90,6 +97,9 @@ impl Editor {
             undo: Vec::new(),
             redo: Vec::new(),
             last_edit: None,
+            revision: 0,
+            saved_revision: 0,
+            content_present,
             // Force a highlight pass on the first render.
         }
     }
@@ -97,7 +107,6 @@ impl Editor {
     /// Replace content and reset editing state (used for file loads/restores).
     pub fn set_text(&mut self, text: &str) {
         self.lines = normalize_text(text);
-        self.saved_lines = self.lines.clone();
         self.cursor = Cursor::default();
         self.anchor = None;
         self.scroll_row = 0;
@@ -106,6 +115,9 @@ impl Editor {
         self.undo.clear();
         self.redo.clear();
         self.last_edit = None;
+        self.revision = 0;
+        self.saved_revision = 0;
+        self.content_present = self.lines.iter().any(|line| !line.trim().is_empty());
         self.syntax.invalidate();
     }
 
@@ -118,11 +130,21 @@ impl Editor {
     }
 
     pub fn is_modified(&self) -> bool {
-        self.lines != self.saved_lines
+        self.revision != self.saved_revision
+    }
+
+    /// Whether the buffer contains anything other than whitespace. Cached so
+    /// menu/toolbar rendering stays O(1) per frame.
+    pub fn has_content(&self) -> bool {
+        self.content_present
     }
 
     pub fn mark_clean(&mut self) {
-        self.saved_lines = self.lines.clone();
+        self.saved_revision = self.revision;
+    }
+
+    fn refresh_content_present(&mut self) {
+        self.content_present = self.lines.iter().any(|line| !line.trim().is_empty());
     }
 
     pub fn line_len(&self, row: usize) -> usize {
@@ -385,6 +407,8 @@ impl Editor {
             lines: self.lines.clone(),
             cursor: self.cursor,
             anchor: self.anchor,
+            revision: self.revision,
+            content_present: self.content_present,
         }
     }
 
@@ -421,6 +445,8 @@ impl Editor {
             self.lines = snapshot.lines;
             self.cursor = snapshot.cursor;
             self.anchor = snapshot.anchor;
+            self.revision = snapshot.revision;
+            self.content_present = snapshot.content_present;
             self.clamp_cursor();
             self.preferred_col = None;
             self.last_edit = None;
@@ -437,6 +463,8 @@ impl Editor {
             self.lines = snapshot.lines;
             self.cursor = snapshot.cursor;
             self.anchor = snapshot.anchor;
+            self.revision = snapshot.revision;
+            self.content_present = snapshot.content_present;
             self.clamp_cursor();
             self.preferred_col = None;
             self.last_edit = None;
@@ -456,6 +484,10 @@ impl Editor {
         };
         let start = self.clamp_position(start);
         let end = self.clamp_position(end);
+        let removed_content = start != end
+            && self.lines[start.row..=end.row]
+                .iter()
+                .any(|line| !line.trim().is_empty());
 
         let prefix: String = self.lines[start.row].chars().take(start.col).collect();
         let end_len = self.line_len(end.row);
@@ -486,6 +518,12 @@ impl Editor {
         };
 
         self.lines.splice(start.row..=end.row, new_lines);
+        self.revision = self.revision.wrapping_add(1);
+        if inserted.iter().any(|line| !line.trim().is_empty()) {
+            self.content_present = true;
+        } else if removed_content {
+            self.content_present = self.lines.iter().any(|line| !line.trim().is_empty());
+        }
         let new_cursor = Cursor::new(start.row + inserted.len() - 1, cursor_col);
         self.cursor = new_cursor;
         self.anchor = None;
@@ -690,6 +728,8 @@ impl Editor {
                 anchor.col += 4;
             }
         }
+        self.revision = self.revision.wrapping_add(1);
+        self.refresh_content_present();
         self.anchor = None;
         self.clamp_cursor();
         self.syntax.invalidate();
@@ -699,9 +739,11 @@ impl Editor {
     fn outdent_selection(&mut self) {
         let (first, last) = self.selected_rows();
         self.record(EditKind::Other);
+        let mut changed = false;
         for line in self.lines.iter_mut().take(last + 1).skip(first) {
             let remove = line.chars().take(4).take_while(|c| *c == ' ').count();
             if remove > 0 {
+                changed = true;
                 let byte_idx = line
                     .char_indices()
                     .nth(remove)
@@ -716,6 +758,10 @@ impl Editor {
             .count()
             .min(4);
         self.cursor.col = self.cursor.col.saturating_sub(removed_here);
+        if changed {
+            self.revision = self.revision.wrapping_add(1);
+            self.refresh_content_present();
+        }
         self.anchor = None;
         self.clamp_cursor();
         self.syntax.invalidate();
@@ -725,6 +771,12 @@ impl Editor {
     /// Toggle `-- ` comments for the selected lines (or the current line).
     pub fn toggle_comment(&mut self) {
         let (first, last) = self.selected_rows();
+        if self.lines[first..=last]
+            .iter()
+            .all(|line| line.trim().is_empty())
+        {
+            return;
+        }
         let all_commented = self.lines[first..=last]
             .iter()
             .filter(|l| !l.trim().is_empty())
@@ -756,6 +808,8 @@ impl Editor {
             };
             *line = new_line;
         }
+        self.revision = self.revision.wrapping_add(1);
+        self.refresh_content_present();
         self.cursor.col = (self.cursor.col as isize + delta_for_cursor).max(0) as usize;
         self.anchor = None;
         self.clamp_cursor();
@@ -978,6 +1032,36 @@ mod tests {
         assert!(e.is_modified());
         e.mark_clean();
         assert!(!e.is_modified());
+    }
+
+    #[test]
+    fn undo_after_save_restores_the_dirty_state() {
+        let mut e = editor("SELECT 1");
+        e.move_cursor(Motion::End, false);
+        e.insert_char(';');
+        e.mark_clean();
+        assert!(!e.is_modified());
+        e.undo();
+        assert!(e.is_modified(), "undo must diverge from the saved revision");
+        e.redo();
+        assert!(!e.is_modified(), "redo must return to the saved revision");
+    }
+
+    #[test]
+    fn content_presence_is_cached_and_updated_by_edits() {
+        let mut e = editor("   \n\t");
+        assert!(!e.has_content());
+        e.insert_char(' ');
+        assert!(!e.has_content());
+        e.insert_char('x');
+        assert!(e.has_content());
+        e.backspace();
+        assert!(!e.has_content());
+        e.insert_text("SELECT 1");
+        assert!(e.has_content());
+        e.select_all();
+        e.delete_selection();
+        assert!(!e.has_content());
     }
 
     #[test]

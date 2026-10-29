@@ -85,13 +85,16 @@ impl Catalog {
         let needle = self.filter.trim().to_lowercase();
         let mut rows = Vec::new();
         let mut placed = HashSet::new();
+        let known_folders: HashSet<Uuid> = self.folders.iter().map(|folder| folder.id).collect();
 
-        let mut folders = self.folders.clone();
+        let mut folders: Vec<&ConnectionFolder> = self.folders.iter().collect();
         folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         for folder in folders {
-            let children = profiles_in_folder(profiles, &self.folders, Some(folder.id));
+            let children = profiles_in_folder(profiles, &known_folders, Some(folder.id));
             let folder_matches = needle.is_empty() || folder.name.to_lowercase().contains(&needle);
-            let child_matches = children.iter().any(|profile| profile_matches(profile, &needle));
+            let child_matches = children
+                .iter()
+                .any(|profile| profile_matches(profile, &needle));
             if !needle.is_empty() && !folder_matches && !child_matches {
                 continue;
             }
@@ -131,7 +134,7 @@ impl Catalog {
             }
         }
 
-        for profile in profiles_in_folder(profiles, &self.folders, None) {
+        for profile in profiles_in_folder(profiles, &known_folders, None) {
             if placed.contains(&profile.id) {
                 continue;
             }
@@ -279,13 +282,12 @@ fn push_connection(
 
 fn profiles_in_folder<'a>(
     profiles: &'a [ConnectionProfile],
-    folders: &[ConnectionFolder],
+    known_folders: &HashSet<Uuid>,
     folder_id: Option<Uuid>,
 ) -> Vec<&'a ConnectionProfile> {
-    let known: HashSet<Uuid> = folders.iter().map(|folder| folder.id).collect();
     let mut matched: Vec<&ConnectionProfile> = profiles
         .iter()
-        .filter(|profile| profile.folder_id.filter(|id| known.contains(id)) == folder_id)
+        .filter(|profile| profile.folder_id.filter(|id| known_folders.contains(id)) == folder_id)
         .collect();
     matched.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     matched
@@ -353,9 +355,17 @@ mod tests {
         let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
         assert_eq!(
             labels,
-            vec!["Work", "Local", "127.0.0.1:5432", "Remote", "db.internal:5432"]
+            vec![
+                "Work",
+                "Local",
+                "127.0.0.1:5432",
+                "Remote",
+                "db.internal:5432"
+            ]
         );
-        assert!(rows.iter().any(|row| row.kind == CatalogKind::Folder && row.expanded));
+        assert!(rows
+            .iter()
+            .any(|row| row.kind == CatalogKind::Folder && row.expanded));
         assert!(rows
             .iter()
             .filter(|row| row.kind == CatalogKind::Endpoint)
@@ -367,7 +377,7 @@ mod tests {
     #[test]
     fn expanding_a_live_host_reveals_its_database() {
         let local = profile("Local", "localhost", "app");
-        let mut catalog = Catalog::from_saved(Vec::new(), &[local.clone()]);
+        let mut catalog = Catalog::from_saved(Vec::new(), std::slice::from_ref(&local));
         let toggle = catalog.toggle(&host_id(local.id));
         assert_eq!(
             toggle,
@@ -378,20 +388,22 @@ mod tests {
         );
         let mut live = HashSet::new();
         live.insert(local.id);
-        let rows = catalog.rows(&[local.clone()], &live, None);
+        let rows = catalog.rows(std::slice::from_ref(&local), &live, None);
         let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
         assert_eq!(labels, vec!["Local", "localhost:5432", "app"]);
         assert_eq!(rows[1].detail, "connected");
         assert_eq!(rows[2].kind, CatalogKind::Database);
         catalog.expanded_databases.insert(local.id);
         let rows = catalog.rows(&[local], &live, None);
-        assert!(rows.iter().any(|row| row.kind == CatalogKind::Database && row.expanded));
+        assert!(rows
+            .iter()
+            .any(|row| row.kind == CatalogKind::Database && row.expanded));
     }
 
     #[test]
     fn collapsing_the_host_hides_the_database_without_forgetting_it() {
         let local = profile("Local", "localhost", "app");
-        let mut catalog = Catalog::from_saved(Vec::new(), &[local.clone()]);
+        let mut catalog = Catalog::from_saved(Vec::new(), std::slice::from_ref(&local));
         catalog.expanded_endpoints.insert(local.id);
         catalog.expanded_databases.insert(local.id);
         let toggle = catalog.toggle(&host_id(local.id));

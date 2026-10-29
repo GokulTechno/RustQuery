@@ -1,6 +1,6 @@
 [package]
 name = "rustquery"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 rust-version = "1.89"
 description = "RustQuery — a fast desktop SQL workbench for PostgreSQL, MySQL and SQLite"
@@ -13,6 +13,7 @@ homepage = "https://github.com/GokulTechno/RustQuery"
 [dependencies]
 # Desktop UI -------------------------------------------------------------------
 eframe = { version = "0.31.1", default-features = false, features = [
+    "accesskit",
     "default_fonts",
     "glow",
     "wayland",

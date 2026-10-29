@@ -84,13 +84,13 @@ After building a package with `scripts/build-packages.sh` (see
 [Packaging](#packaging)), install it with:
 
 ```bash
-sudo apt install ./dist/rustquery_0.1.0-1_amd64.deb
+sudo apt install ./dist/rustquery_0.1.5-1_amd64.deb
 ```
 
 ### Fedora / RHEL
 
 ```bash
-sudo dnf install ./dist/rustquery-0.1.0-1.x86_64.rpm
+sudo dnf install ./dist/rustquery-0.1.5-1.x86_64.rpm
 ```
 
 ### From source
@@ -141,11 +141,13 @@ testing. Environment variables also affect the default location; see below.
 
 ## Quick start
 
-1. Launch RustQuery. The connection dashboard opens when no session is active.
-2. Choose **New connection** (`Ctrl+Shift+N`), select a driver and fill in the
-   fields. Use **Test connection** to verify the settings, then save the
-   profile.
-3. Select the profile and choose **Connect** (or double-click the card).
+1. Launch RustQuery. The workspace opens with the connection explorer on the
+   left and every saved profile listed.
+2. Choose **Connection** in the explorer (or `Ctrl+Shift+N`), select a driver
+   and fill in the fields. Use **Test connection** to verify the settings, then
+   save the profile.
+3. Expand the saved connection's host to connect. The session stays open until
+   you quit; use the connection dashboard (`F2`) for profile cards and tests.
 4. Type SQL in the editor and press `F5` (or `Ctrl+Enter`). A selection runs on
    its own; otherwise the whole buffer runs as a script.
 5. Sort by clicking a column header, press `Ctrl+F` to filter, and press
@@ -337,7 +339,7 @@ cargo test
 
 The 56 unit tests cover editor editing/undo/highlighting, SQL export escaping,
 grid sorting/filtering, schema tree behaviour, config validation, SQL error
-line/column mapping and more. Six headless desktop tests cover profile forms,
+line/column mapping and more. Headless desktop tests cover profile forms,
 export paths, grid filtering/sorting, legacy settings and every theme palette.
 Two end-to-end SQLite tests exercise real connections, scripts, transactions,
 dynamic values and introspection without an external service. **No external

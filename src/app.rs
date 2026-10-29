@@ -29,6 +29,7 @@ use crate::schema_tree::{RowKind, SchemaTree, TableLoadRequest, TreeAction};
 
 const MAX_LOGS: usize = 1_000;
 const WORKSPACE_AUTOSAVE: Duration = Duration::from_secs(5);
+const HISTORY_AUTOSAVE: Duration = Duration::from_secs(2);
 const TOAST_DURATION: Duration = Duration::from_millis(4_500);
 
 // ---------------------------------------------------------------------------
@@ -718,6 +719,21 @@ pub enum ConfirmAction {
     Connect(Box<ConnectionProfile>),
 }
 
+impl ConfirmAction {
+    /// Whether confirming discards data or closes a live session. These
+    /// actions get a red primary button instead of the normal accent fill.
+    pub fn is_destructive(&self) -> bool {
+        matches!(
+            self,
+            ConfirmAction::Quit
+                | ConfirmAction::Disconnect
+                | ConfirmAction::DeleteProfile(_)
+                | ConfirmAction::DeleteFolder(_)
+                | ConfirmAction::CloseTab(_)
+        )
+    }
+}
+
 pub struct ConfirmDialog {
     pub title: String,
     pub message: String,
@@ -783,6 +799,10 @@ pub struct App {
     pub toast: Option<Toast>,
     pub workspace_dirty: bool,
     pub last_workspace_save: Instant,
+    pub workspace_save_failed: bool,
+    pub history_dirty: bool,
+    pub last_history_save: Instant,
+    pub history_save_failed: bool,
     pub started: Instant,
     pub last_directory_hint: Option<String>,
 }
@@ -831,6 +851,10 @@ impl App {
             toast: None,
             workspace_dirty: false,
             last_workspace_save: Instant::now(),
+            workspace_save_failed: false,
+            history_dirty: false,
+            last_history_save: Instant::now(),
+            history_save_failed: false,
             started: Instant::now(),
             last_directory_hint: None,
         };
@@ -985,7 +1009,7 @@ impl App {
         };
         let id = tab.id;
         let title = tab.title.clone();
-        let needs_confirm = tab.editor.is_modified() && !tab.editor.text().trim().is_empty();
+        let needs_confirm = tab.editor.is_modified() && tab.editor.has_content();
         if needs_confirm {
             self.modal = Some(Modal::Confirm(ConfirmDialog {
                 title: "Close query tab?".to_string(),
@@ -1096,11 +1120,24 @@ impl App {
     }
 
     pub fn save_history_now(&mut self) {
-        if let Err(err) = self.store.save_history(&self.history) {
-            self.log(
-                LogLevel::Error,
-                format!("Could not save query history: {err}"),
-            );
+        self.last_history_save = Instant::now();
+        match self.store.save_history(&self.history) {
+            Ok(()) => {
+                self.history_dirty = false;
+                self.history_save_failed = false;
+            }
+            Err(err) => {
+                // Keep the dirty flag so the next tick retries, but do not
+                // flood the console with the same error every few seconds.
+                self.history_dirty = true;
+                if !self.history_save_failed {
+                    self.history_save_failed = true;
+                    self.log(
+                        LogLevel::Error,
+                        format!("Could not save query history: {err}"),
+                    );
+                }
+            }
         }
     }
 
@@ -1118,17 +1155,23 @@ impl App {
             tabs,
             active: self.active_tab,
         };
+        self.last_workspace_save = Instant::now();
         match self.store.save_workspace(&workspace) {
             Ok(()) => {
                 self.workspace_dirty = false;
-                self.last_workspace_save = Instant::now();
+                self.workspace_save_failed = false;
             }
             Err(err) => {
-                self.workspace_dirty = false;
-                self.log(
-                    LogLevel::Error,
-                    format!("Could not autosave workspace: {err}"),
-                );
+                // Keep the workspace dirty so a transient failure (read-only
+                // disk, full filesystem, permission change) is retried.
+                self.workspace_dirty = true;
+                if !self.workspace_save_failed {
+                    self.workspace_save_failed = true;
+                    self.log(
+                        LogLevel::Error,
+                        format!("Could not autosave workspace: {err}"),
+                    );
+                }
             }
         }
     }
@@ -1196,6 +1239,9 @@ impl App {
         if self.workspace_dirty && self.last_workspace_save.elapsed() >= WORKSPACE_AUTOSAVE {
             self.save_workspace_now();
         }
+        if self.history_dirty && self.last_history_save.elapsed() >= HISTORY_AUTOSAVE {
+            self.save_history_now();
+        }
     }
 
     pub fn mark_workspace_dirty(&mut self) {
@@ -1226,10 +1272,7 @@ impl App {
             .as_ref()
             .map(|session| session.tx_active)
             .unwrap_or(false)
-            || self
-                .retained
-                .values()
-                .any(|held| held.session.tx_active)
+            || self.retained.values().any(|held| held.session.tx_active)
     }
 
     fn owns_session(&self, session_id: u64) -> bool {
@@ -1290,12 +1333,7 @@ impl App {
 
     /// Make an already-open profile the editor target. Pools stay open.
     fn activate_open_profile(&mut self, profile_id: Uuid) -> bool {
-        if self
-            .session
-            .as_ref()
-            .map(|session| session.info.profile_id)
-            == Some(profile_id)
-        {
+        if self.session.as_ref().map(|session| session.info.profile_id) == Some(profile_id) {
             return true;
         }
         let Some(held) = self.retained.remove(&profile_id) else {
@@ -1309,12 +1347,7 @@ impl App {
     }
 
     fn tree_for(&self, profile_id: Uuid) -> Option<&SchemaTree> {
-        if self
-            .session
-            .as_ref()
-            .map(|session| session.info.profile_id)
-            == Some(profile_id)
-        {
+        if self.session.as_ref().map(|session| session.info.profile_id) == Some(profile_id) {
             return Some(&self.tree);
         }
         self.retained.get(&profile_id).map(|held| &held.tree)
@@ -1330,12 +1363,7 @@ impl App {
     }
 
     pub fn schema_loading_for(&self, profile_id: Uuid) -> bool {
-        if self
-            .session
-            .as_ref()
-            .map(|session| session.info.profile_id)
-            == Some(profile_id)
-        {
+        if self.session.as_ref().map(|session| session.info.profile_id) == Some(profile_id) {
             return self.schema_loading;
         }
         self.retained
@@ -1368,7 +1396,10 @@ impl App {
     }
 
     pub fn active_profile_index(&self) -> Option<usize> {
-        let id = self.session.as_ref().map(|session| session.info.profile_id)?;
+        let id = self
+            .session
+            .as_ref()
+            .map(|session| session.info.profile_id)?;
         self.profiles.iter().position(|profile| profile.id == id)
     }
 
@@ -1541,19 +1572,11 @@ impl App {
             }
             return;
         }
-        if self
-            .connect
-            .as_ref()
-            .map(|connect| connect.profile.id)
-            == Some(profile_id)
-        {
+        if self.connect.as_ref().map(|connect| connect.profile.id) == Some(profile_id) {
             return;
         }
         if self.connect.is_some() {
-            self.toast(
-                LogLevel::Info,
-                "A connection attempt is already running.",
-            );
+            self.toast(LogLevel::Info, "A connection attempt is already running.");
             return;
         }
         let Some(profile) = self
@@ -2331,7 +2354,7 @@ impl App {
         let Some(tab) = self.active_tab() else {
             return;
         };
-        if tab.editor.text().trim().is_empty() {
+        if !tab.editor.has_content() {
             self.toast(LogLevel::Warn, "Nothing to save.");
             return;
         }
@@ -2593,7 +2616,12 @@ impl App {
         if name.is_empty() {
             return Err("Folder name cannot be empty.".into());
         }
-        let Some(folder) = self.catalog.folders.iter_mut().find(|folder| folder.id == id) else {
+        let Some(folder) = self
+            .catalog
+            .folders
+            .iter_mut()
+            .find(|folder| folder.id == id)
+        else {
             return Err("That folder is no longer in the explorer.".into());
         };
         folder.name = name.to_string();
@@ -2641,7 +2669,12 @@ impl App {
 
     pub fn move_profile_to_folder(&mut self, profile_id: Uuid, folder_id: Option<Uuid>) {
         if let Some(folder_id) = folder_id {
-            if !self.catalog.folders.iter().any(|folder| folder.id == folder_id) {
+            if !self
+                .catalog
+                .folders
+                .iter()
+                .any(|folder| folder.id == folder_id)
+            {
                 return;
             }
             self.catalog.expanded_folders.insert(folder_id);
@@ -2659,12 +2692,7 @@ impl App {
     }
 
     pub fn disconnect_profile(&mut self, profile_id: Uuid) {
-        if self
-            .session
-            .as_ref()
-            .map(|session| session.info.profile_id)
-            == Some(profile_id)
-        {
+        if self.session.as_ref().map(|session| session.info.profile_id) == Some(profile_id) {
             self.disconnect();
             return;
         }
@@ -2795,10 +2823,7 @@ impl App {
                     Ok(session) => {
                         let profile_id = session.info.profile_id;
                         self.retained.remove(&profile_id);
-                        if self
-                            .session
-                            .as_ref()
-                            .map(|current| current.info.profile_id)
+                        if self.session.as_ref().map(|current| current.info.profile_id)
                             != Some(profile_id)
                         {
                             self.park_active();
@@ -2857,7 +2882,8 @@ impl App {
                 let active = self.session.as_ref().map(|session| session.id) == Some(session_id);
                 match result {
                     Ok(schemas) => {
-                        let object_count: usize = schemas.iter().map(|schema| schema.objects.len()).sum();
+                        let object_count: usize =
+                            schemas.iter().map(|schema| schema.objects.len()).sum();
                         if active {
                             let Some(session) = self.session.as_ref() else {
                                 return;
@@ -2875,8 +2901,7 @@ impl App {
                                 .find(|held| held.session.id == session_id)
                             {
                                 held.schema_loading = false;
-                                held.tree
-                                    .load_schemas(&schemas, &root_label, root_detail);
+                                held.tree.load_schemas(&schemas, &root_label, root_detail);
                             }
                         }
                         self.log(
@@ -2926,8 +2951,7 @@ impl App {
                             .values_mut()
                             .find(|held| held.session.id == session_id)
                         {
-                            held.tree
-                                .complete_table_load(&node_id, Ok(details.clone()));
+                            held.tree.complete_table_load(&node_id, Ok(details.clone()));
                         }
                         self.log(
                             LogLevel::Info,
@@ -3207,7 +3231,9 @@ impl App {
         if self.history.len() > 500 {
             self.history.truncate(500);
         }
-        self.save_history_now();
+        // History is written on the next tick (or on quit) so a query never
+        // blocks the UI thread on a synchronous JSON write.
+        self.history_dirty = true;
     }
 
     // -----------------------------------------------------------------
@@ -3387,6 +3413,19 @@ fn quote_sqlite_ident(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destructive_confirmations_are_classified() {
+        assert!(ConfirmAction::Quit.is_destructive());
+        assert!(ConfirmAction::Disconnect.is_destructive());
+        assert!(ConfirmAction::DeleteProfile(Uuid::nil()).is_destructive());
+        assert!(ConfirmAction::DeleteFolder(Uuid::nil()).is_destructive());
+        assert!(ConfirmAction::CloseTab(Uuid::nil()).is_destructive());
+        assert!(
+            !ConfirmAction::Connect(Box::new(ConnectionProfile::new(Driver::Sqlite)))
+                .is_destructive()
+        );
+    }
 
     #[test]
     fn profile_form_cycles_drivers_and_hides_network_fields() {

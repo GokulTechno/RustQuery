@@ -111,6 +111,14 @@ fn secondary(ui: &mut Ui, text: &str) -> egui::Response {
     ui.add(Button::new(text).min_size(egui::vec2(78.0, 28.0)))
 }
 
+fn destructive(ui: &mut Ui, palette: &Palette, text: &str) -> egui::Response {
+    ui.add(
+        Button::new(RichText::new(text).color(palette.on_destructive()).strong())
+            .fill(palette.red)
+            .min_size(egui::vec2(88.0, 28.0)),
+    )
+}
+
 fn footer_buttons(ui: &mut Ui, _palette: &Palette, right: impl FnOnce(&mut Ui)) {
     ui.add_space(8.0);
     ui.separator();
@@ -338,15 +346,15 @@ fn connection_picker(
                                 } else {
                                     label
                                 })
-                                    .monospace()
-                                    .small()
-                                    .color(if selected {
-                                        palette.text
-                                    } else if is_active {
-                                        palette.green
-                                    } else {
-                                        palette.subtext
-                                    }),
+                                .monospace()
+                                .small()
+                                .color(if selected {
+                                    palette.text
+                                } else if is_active {
+                                    palette.green
+                                } else {
+                                    palette.subtext
+                                }),
                             )
                             .sense(egui::Sense::click())
                             .truncate(),
@@ -636,12 +644,18 @@ fn confirm(
         yes = Some(false);
     }
 
+    let destructive_action = dialog.action.is_destructive();
     let close = shell(ctx, "rustquery_confirm", palette, 480.0, |ui| {
         heading(ui, palette, &dialog.title, "");
         ui.label(RichText::new(&dialog.message).color(palette.text));
         ui.add_space(6.0);
         footer_buttons(ui, palette, |ui| {
-            if primary(ui, palette, "Yes").clicked() {
+            let confirmed = if destructive_action {
+                destructive(ui, palette, "Yes").clicked()
+            } else {
+                primary(ui, palette, "Yes").clicked()
+            };
+            if confirmed {
                 yes = Some(true);
             }
             if secondary(ui, "No").clicked() {
@@ -1196,11 +1210,25 @@ fn settings(
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let plus = ui.small_button("+");
+                            plus.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    "Increase setting",
+                                )
+                            });
                             if plus.clicked() {
                                 selected = index;
                                 adjust_setting(&mut app.settings, *field, 1);
                             }
                             let minus = ui.small_button("−");
+                            minus.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    "Decrease setting",
+                                )
+                            });
                             if minus.clicked() {
                                 selected = index;
                                 adjust_setting(&mut app.settings, *field, -1);

@@ -7,7 +7,7 @@
 
 use eframe::egui::{
     self, text::LayoutJob, Align2, Color32, CursorIcon, Event, FontId, Id, Key, Modifiers, Pos2,
-    Rect, ScrollArea, Sense, Stroke, TextFormat, TextStyle, Ui, Vec2,
+    Rect, ScrollArea, Sense, Stroke, StrokeKind, TextFormat, TextStyle, Ui, Vec2,
 };
 
 use crate::app::{App, Focus};
@@ -296,6 +296,17 @@ pub fn show(app: &mut App, ui: &mut Ui, palette: &Palette) {
 
     // Thin scroll indicators (the editor is wheel/keyboard scrolled).
     paint_scrollbars(ui, &geometry, editor, palette);
+
+    // Keyboard focus ring. This is deliberately separate from hover/active
+    // styling so keyboard users can see which pane owns input.
+    if keyboard_owner && response.has_focus() {
+        ui.painter_at(rect).rect_stroke(
+            rect.shrink(1.0),
+            0.0,
+            Stroke::new(1.5_f32, palette.accent),
+            StrokeKind::Inside,
+        );
+    }
 
     // -------------------------------------------------------------
     // Completion popup

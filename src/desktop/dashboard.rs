@@ -32,9 +32,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     ui.add_space(14.0);
                     active_session(app, ui, &palette, &mut action);
                     connect_progress(app, ui, &palette, &mut action);
-                    if let Some(error) = app.dashboard.connect_error.clone() {
+                    if let Some(error) = app.dashboard.connect_error.as_deref() {
                         ui.add_space(8.0);
-                        error_banner(ui, &palette, &error, &mut action);
+                        error_banner(ui, &palette, error, &mut action);
                     }
                     ui.add_space(16.0);
                     profiles(app, ui, &palette, &mut action);
@@ -49,7 +49,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }
 }
 
-fn header(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<DashboardAction>) {
+fn header(app: &App, ui: &mut Ui, palette: &Palette, action: &mut Option<DashboardAction>) {
     ui.vertical(|ui| {
         ui.label(
             RichText::new("RustQuery")
@@ -218,7 +218,7 @@ fn error_banner(ui: &mut Ui, palette: &Palette, error: &str, action: &mut Option
         });
 }
 
-fn profiles(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<DashboardAction>) {
+fn profiles(app: &App, ui: &mut Ui, palette: &Palette, action: &mut Option<DashboardAction>) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new("Connections")
@@ -282,13 +282,12 @@ fn profiles(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<D
         return;
     }
 
-    let profiles = app.profiles.clone();
     let selected = app.dashboard.selected;
-    let tests = app.dashboard.tests.clone();
+    let tests = &app.dashboard.tests;
     let active_session = app.session.as_ref().map(|session| session.info.profile_id);
     let busy = app.connect.is_some();
 
-    for (index, profile) in profiles.iter().enumerate() {
+    for (index, profile) in app.profiles.iter().enumerate() {
         let is_selected = index == selected;
         let border = if is_selected {
             palette.accent
@@ -363,11 +362,18 @@ fn profiles(app: &mut App, ui: &mut Ui, palette: &Palette, action: &mut Option<D
                         {
                             *action = Some(DashboardAction::Test(profile.id));
                         }
+                        let connect = Button::new(RichText::new("Connect").color(if busy {
+                            palette.muted
+                        } else {
+                            palette.on_accent()
+                        }))
+                        .fill(if busy {
+                            palette.surface
+                        } else {
+                            palette.accent
+                        });
                         if ui
-                            .add_enabled(
-                                !busy,
-                                Button::new(RichText::new("Connect").color(palette.on_accent())),
-                            )
+                            .add_enabled(!busy, connect)
                             .on_hover_text("Connect to this database")
                             .clicked()
                         {

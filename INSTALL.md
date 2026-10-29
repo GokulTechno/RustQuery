@@ -185,7 +185,8 @@ If `~/.local/bin` is not on `PATH`:
 ```
 
 Start RustQuery from the application menu, or run `rustquery` in a terminal.
-The connection dashboard opens when no session is active.
+The workspace opens with the connection explorer; expand a saved host to
+connect. Press `F2` for the connection dashboard.
 
 ## Uninstall
 

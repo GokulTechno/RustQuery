@@ -1,4 +1,4 @@
-%{!?rq_version:%global rq_version 0.1.0}
+%{!?rq_version:%global rq_version 0.1.5}
 %{!?rq_release:%global rq_release 1}
 %{!?rq_date:%global rq_date Thu Jan 01 2026}
 %{!?rq_maintainer:%global rq_maintainer RustQuery contributors <rustquery@localhost>}
